@@ -1,0 +1,16 @@
+# Ambiente virtual (cada um cria o seu)
+.venv/
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Banco local (cada um tem o seu)
+db.sqlite3
+
+# Variáveis secretas
+.env
+
+# Arquivos gerados no deploy
+staticfiles/
+media/
