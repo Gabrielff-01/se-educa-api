@@ -1,3 +1,4 @@
+from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator, RegexValidator
 from django.db import models
 
@@ -71,7 +72,7 @@ class Curso(models.Model):
         verbose_name="carga horária mínima anual (horas)",
         default=800,
         validators=[MinValueValidator(1)],
-        help_text="A LDB pede no mínimo 800 horas por ano.",
+        help_text="LDB, art. 24: 800 h no Ensino Fundamental e 1.000 h no Ensino Médio.",
     )
 
     class Meta:
@@ -182,6 +183,16 @@ class Turma(models.Model):
         super().clean()
         if self.letra:
             self.letra = self.letra.strip().upper()
+
+        # Regra do DED: só dá pra abrir turma de uma série que a escola oferece naquele ano.
+        # "escola.ofertas" vem do related_name do app regulacao (por isso ele precisa estar instalado).
+        if self.escola_id and self.serie_id and self.ano_letivo:
+            oferece = self.escola.ofertas.filter(ano_letivo=self.ano_letivo, series=self.serie).exists()
+            if not oferece:
+                raise ValidationError(
+                    {"serie": f"{self.escola} não oferece {self.serie.nome} em {self.ano_letivo}. "
+                              "Cadastre antes em Regulação (DED) > Ofertas de séries."}
+                )
 
     def save(self, *args, **kwargs):
         # Garante a letra em maiúscula mesmo quando o clean() não roda (shell, scripts, API).
