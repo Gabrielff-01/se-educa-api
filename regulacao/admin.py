@@ -3,7 +3,15 @@ from django.contrib import admin
 from django.core.exceptions import ValidationError
 from django.forms.models import BaseInlineFormSet
 
-from .models import AtoAutorizativo, ItemMatriz, Matriz, Oferta, formatar_horas, validar_carga_minima
+from .models import (
+    AtoAutorizativo,
+    ItemMatriz,
+    Matriz,
+    Oferta,
+    conferir_lotacoes,
+    formatar_horas,
+    validar_carga_minima,
+)
 
 
 @admin.register(AtoAutorizativo)
@@ -88,14 +96,16 @@ class ItemMatrizFormSet(BaseInlineFormSet):
         except ValidationError:
             return  # duração ou semanas inválidas: o erro já aparece lá em cima
 
-        total_aulas = 0
+        aulas_por_materia = {}
         for form in self.forms:
             dados = form.cleaned_data
             if not dados or dados.get("DELETE"):
                 continue  # linha extra em branco ou marcada em "Remover?"
-            total_aulas += dados["aulas_semanais"]
+            aulas_por_materia[dados["materia"].pk] = dados["aulas_semanais"]
+        total_aulas = sum(aulas_por_materia.values())
 
         validar_carga_minima(matriz.serie, matriz.duracao_aula_minutos, matriz.semanas_letivas, total_aulas)
+        conferir_lotacoes(matriz, aulas_por_materia)
 
 
 class ItemMatrizInline(admin.TabularInline):
@@ -114,6 +124,11 @@ class MatrizAdmin(admin.ModelAdmin):
 
     def get_queryset(self, request):
         return super().get_queryset(request).select_related("serie__curso").prefetch_related("itens")
+
+    def get_readonly_fields(self, request, obj=None):
+        if obj:  # editando: série, ano e jornada travados, porque as lotações dependem deles
+            return ("serie", "ano_letivo", "jornada")
+        return ()
 
     @admin.display(description="aulas por semana")
     def total_aulas(self, obj):
