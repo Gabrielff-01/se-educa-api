@@ -29,6 +29,21 @@ class Usuario(AbstractUser):
         blank=True,
         help_text="Só para usuários da Secretaria.",
     )
+    escola = models.ForeignKey(
+        "rede.Escola",  # em texto: o app rede vem depois do contas
+        verbose_name="escola",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="usuarios",
+        help_text="Escola onde a pessoa estuda ou trabalha. Obrigatória para Gestão da escola.",
+    )
+    notificacoes_vistas_em = models.DateTimeField(
+        verbose_name="viu as notificações em",
+        null=True,
+        blank=True,
+        help_text="O que chegou depois disso aparece como novo.",
+    )
 
     class Meta:
         verbose_name = "usuário"
@@ -40,6 +55,8 @@ class Usuario(AbstractUser):
             raise ValidationError({"setor": "Usuário da Secretaria precisa de um setor (DIES, DED ou RH)."})
         if self.perfil != self.Perfil.SECRETARIA and self.setor:
             raise ValidationError({"setor": "Só usuários da Secretaria têm setor."})
+        if self.perfil == self.Perfil.ESCOLA and not self.escola_id:
+            raise ValidationError({"escola": "Usuário da Gestão da escola precisa de uma escola."})
 
     def __str__(self):
         return self.get_full_name() or self.username

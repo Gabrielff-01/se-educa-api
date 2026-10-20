@@ -1,9 +1,10 @@
 from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
+from django.db.models import Sum
 from django.utils import timezone
 
-from rede.models import Curso, Escola, Materia, Serie
+from rede.models import Curso, Escola, Materia, Serie, Turma
 
 
 def horas_por_ano(aulas_semanais, duracao_aula_minutos, semanas_letivas):
@@ -31,6 +32,34 @@ def validar_carga_minima(serie, duracao_aula_minutos, semanas_letivas, total_aul
             f"A matriz soma {formatar_horas(horas)} horas por ano, mas {serie.curso} exige "
             f"no mínimo {minimo} horas. Faltam {formatar_horas(minimo - horas)} horas."
         )
+
+
+def conferir_lotacoes(matriz, aulas_por_materia):
+    """Diminuir (ou tirar) uma matéria da matriz não pode deixar professor lotado sobrando.
+
+    aulas_por_materia: {id da matéria: aulas por semana} como a matriz vai ficar.
+    As lotações são do app rh (Aula 5); aqui a gente só lê elas pela turma.
+    """
+    if not matriz.pk:
+        return  # matriz nova: ainda não tem professor lotado
+    turmas = Turma.objects.filter(serie_id=matriz.serie_id, ano_letivo=matriz.ano_letivo)
+    if matriz.jornada == Matriz.Jornada.INTEGRAL:
+        turmas = turmas.filter(turno=Turma.Turno.INTEGRAL)
+    else:
+        turmas = turmas.exclude(turno=Turma.Turno.INTEGRAL)
+    lotadas = (
+        turmas.filter(lotacoes__isnull=False)
+        .values("letra", "lotacoes__materia", "lotacoes__materia__nome")
+        .annotate(total=Sum("lotacoes__aulas_semanais"))
+    )
+    for linha in lotadas:
+        permitido = aulas_por_materia.get(linha["lotacoes__materia"], 0)
+        if linha["total"] > permitido:
+            raise ValidationError(
+                f"A turma {matriz.serie.nome} {linha['letra']} já tem {linha['total']} aulas de "
+                f"{linha['lotacoes__materia__nome']} lotadas com professores, mas a matriz "
+                f"ficaria com {permitido}. Ajuste as lotações no RH antes."
+            )
 
 
 class AtoAutorizativo(models.Model):
