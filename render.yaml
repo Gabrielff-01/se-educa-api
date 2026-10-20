@@ -1,0 +1,26 @@
+# "Blueprint" do Render: descreve o serviço da API pra ele criar sozinho.
+# No Render: New > Blueprint > escolher o repositório se-educa-api.
+services:
+  - type: web
+    name: se-educa-api
+    runtime: python
+    plan: free
+    branch: main
+    buildCommand: bash build.sh
+    startCommand: gunicorn config.wsgi:application
+    healthCheckPath: /
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.14"
+      - key: DEBUG
+        value: "False"
+      - key: SECRET_KEY
+        generateValue: true  # o Render inventa uma chave grande e secreta
+      - key: DATABASE_URL
+        sync: false  # o Render pergunta: cole a "connection string" do Neon
+      - key: DJANGO_SUPERUSER_USERNAME
+        sync: false
+      - key: DJANGO_SUPERUSER_PASSWORD
+        sync: false
+      - key: DJANGO_SUPERUSER_EMAIL
+        sync: false
