@@ -58,7 +58,7 @@ def conferir_lotacoes(matriz, aulas_por_materia):
             raise ValidationError(
                 f"A turma {matriz.serie.nome} {linha['letra']} já tem {linha['total']} aulas de "
                 f"{linha['lotacoes__materia__nome']} lotadas com professores, mas a matriz "
-                f"ficaria com {permitido}. Ajuste as lotações no RH antes."
+                f"ficaria com {permitido}. Peça às escolas para ajustar as aulas dos professores antes."
             )
 
 

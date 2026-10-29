@@ -5,7 +5,8 @@ Regra geral do SE Educa:
 - só o setor responsável pode CRIAR, EDITAR ou APAGAR.
   DIES: escolas, cursos, séries, matérias, turmas e calendário.
   DED: atos autorizativos, ofertas e matrizes.
-  RH: professores e lotações.
+  RH: professores e em qual escola cada um trabalha (alocação).
+  Escola: função de cada professor, turmas e matérias dele (lotação) e o quadro de horários.
 - o superusuário (admin) pode tudo.
 """
 

@@ -58,6 +58,7 @@ academico/   alunos, responsáveis, matrículas, diário (aulas e chamada), nota
              das unidades, tarefas, planos de aula, comunicados, grade de horários e merenda
 auditoria/   histórico de alterações: quem criou, editou ou apagou o quê, e o antes/depois
 solicitacoes/ pedidos da escola para a DIES (turma nova, capacidade, outros) com conversa
+documentos/   documentos que aluno/responsável mandam à escola (atestado, matrícula...); a escola aceita ou recusa
 ```
 
 ## Endereços da API
@@ -71,9 +72,13 @@ Todos pedem login (cabeçalho `Authorization: Bearer <token>`), menos o login e 
 | `GET /api/auth/eu/` | quem está logado |
 | `GET /api/opcoes/` | listas de escolha (turnos, tipos de ato, cargas...) |
 | `/api/regionais/` `/api/escolas/` `/api/cursos/` `/api/series/` `/api/materias/` `/api/turmas/` | DIES |
+| `GET /api/escolas/rede/` | tela "Escolas da rede" (lista e mapa): contato, localização, cursos e vagas por série e turno para todos; alunos, turmas e servidores só para a gestão |
+| `GET /api/escolas/<id>/ficha/?ano=2026` | ficha da escola (como no site da SEDUC): dados, turmas, equipe diretiva, professores e resoluções. Secretaria vê todas; a escola, só a dela |
 | `/api/calendarios/` `/api/eventos/` | DIES (`POST /api/calendarios/<id>/adicionar_feriados/`) |
 | `/api/atos/` `/api/ofertas/` `/api/matrizes/` | DED |
-| `/api/professores/` `/api/lotacoes/` `/api/afastamentos/` | RH (só a Secretaria vê). `POST /api/professores/<id>/criar_acesso/` cria o login |
+| `/api/professores/` `/api/afastamentos/` | RH (só a Secretaria vê). `POST /api/professores/<id>/criar_acesso/` cria o login |
+| `/api/alocacoes/` | RH aloca o professor numa escola (horas e portaria). A escola lê as dela e define a função com `POST /api/alocacoes/<id>/funcao/` (`professor`, `diretor`, `coordenador`, `secretario`) |
+| `/api/lotacoes/` | turmas e matérias de cada professor: quem cadastra é a escola (só professor alocado nela, com função Professor, até 2/3 das horas que ele tem ali) |
 | `GET /api/rh/painel/` `GET /api/rh/carencias/` | resumo do RH e aulas sem professor / para substituir |
 | `/api/alunos/` `/api/responsaveis/` | escola e Secretaria. `criar_acesso` cria o login do aluno ou do responsável; `vincular_responsavel` e `desvincular_responsavel` ligam e desligam mãe/pai do aluno |
 | `/api/matriculas/` | `POST /api/matriculas/nova/` cadastra aluno + responsável + matrícula de uma vez |
@@ -89,11 +94,14 @@ Todos pedem login (cabeçalho `Authorization: Bearer <token>`), menos o login e 
 | `GET /api/rede/matriculas/` `frequencia/` `carga-horaria/` | números da rede (Secretaria) |
 | `GET /api/registros/` | histórico de alterações (a Secretaria vê tudo; os outros, só o que eles fizeram) |
 | `/api/solicitacoes/` | pedidos escola → DIES. A escola abre e conversa (`mensagens`); a DIES responde, `atender` (cria a turma ou muda a capacidade) ou `recusar` |
+| `GET /api/documentos/na-chamada/?turma=<id>&data=AAAA-MM-DD` | alunos da turma com atestado ou justificativa ACEITOS que cobrem o dia (amarelo na chamada) |
+| `/api/documentos/` | documentos enviados à escola. Aluno/responsável enviam com arquivo (PDF/JPG/PNG até 5 MB, `multipart/form-data`) e cancelam enquanto aguarda; a escola abre (`arquivo`), `aceitar` ou `recusar` (com motivo). O arquivo fica guardado no banco |
 
 Filtros pela URL, por exemplo: `/api/turmas/?escola=1&ano_letivo=2026`.
 
 **Quem pode o quê:** todo mundo logado lê os cadastros da rede; só o setor responsável cria,
-edita e apaga (DIES, DED ou RH). Professores e lotações só a Secretaria vê.
+edita e apaga (DIES, DED ou RH). O RH aloca o professor na escola; a escola escolhe a função,
+as turmas e o horário dele.
 A escola cuida só dos alunos, matrículas, horários e merenda dela. O professor só lança
 aula, chamada, nota, tarefa e plano nas turmas e matérias da sua lotação. O aluno vê só
 o que é dele, e o responsável só o dos filhos.

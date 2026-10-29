@@ -5,7 +5,7 @@ from django.db import models
 from django.db.models import Sum
 from django.utils import timezone
 
-from rede.models import Materia, Turma
+from rede.models import Escola, Materia, Turma
 from regulacao.models import Matriz
 
 
@@ -121,6 +121,13 @@ class Professor(models.Model):
         carga_antiga = Professor.objects.get(pk=self.pk).carga_horaria_semanal
         if self.carga_horaria_semanal >= carga_antiga:
             return  # a carga não diminuiu: não tem o que conferir
+        alocadas = self.alocacoes.aggregate(total=Sum("horas_semanais"))["total"] or 0
+        if alocadas > self.carga_horaria_semanal:
+            mensagem = (
+                f"{self.nome} está alocado em escolas somando {alocadas} horas. "
+                "Diminua ou tire uma alocação antes de diminuir a carga."
+            )
+            raise ValidationError({"carga_horaria_semanal": mensagem})
         anos = set(self.lotacoes.values_list("turma__ano_letivo", flat=True))
         for ano in sorted(anos):
             aulas = self.aulas_no_ano(ano)
@@ -166,8 +173,112 @@ class Professor(models.Model):
         return f"{self.nome} ({self.matricula})"
 
 
+class Alocacao(models.Model):
+    """Em qual escola o professor trabalha e qual a função dele lá.
+
+    Quem faz o quê:
+    - o RH aloca: escolhe a escola e quantas horas da carga ele cumpre nela
+      (um professor de 40 h pode ficar 20 h numa escola e 20 h em outra);
+    - a escola define a função (professor, diretor, coordenador, secretário) e,
+      se for professor, as turmas e matérias dele (a Lotacao, logo abaixo).
+    """
+
+    class Funcao(models.TextChoices):
+        PROFESSOR = "professor", "Professor(a)"
+        DIRETOR = "diretor", "Diretor(a)"
+        COORDENADOR = "coordenador", "Coordenador(a)"
+        SECRETARIO = "secretario", "Secretário(a) escolar"
+
+    # Quem aparece na "Equipe diretiva" da ficha da escola.
+    FUNCOES_DIRETIVAS = [Funcao.DIRETOR, Funcao.COORDENADOR, Funcao.SECRETARIO]
+
+    professor = models.ForeignKey(
+        Professor, verbose_name="professor", on_delete=models.PROTECT, related_name="alocacoes"
+    )
+    escola = models.ForeignKey(Escola, verbose_name="escola", on_delete=models.PROTECT, related_name="alocacoes")
+    horas_semanais = models.PositiveSmallIntegerField(
+        verbose_name="horas na escola", choices=Professor.Carga.choices, default=Professor.Carga.H40,
+        help_text="Quantas horas da carga do professor ele cumpre nesta escola.",
+    )
+    portaria = models.CharField(
+        verbose_name="portaria de lotação", max_length=30, blank=True, help_text="Ex.: 0428/2025"
+    )
+    desde = models.DateField(verbose_name="na escola desde", default=timezone.localdate)
+    funcao = models.CharField(
+        verbose_name="função", max_length=12, choices=Funcao.choices, default=Funcao.PROFESSOR
+    )
+    portaria_funcao = models.CharField(
+        verbose_name="portaria da função", max_length=30, blank=True,
+        help_text="Diretor e coordenador são nomeados por portaria. Ex.: 3161/2025",
+    )
+
+    class Meta:
+        ordering = ["escola__nome", "professor__nome"]
+        verbose_name = "alocação na escola"
+        verbose_name_plural = "alocações nas escolas"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["professor", "escola"],
+                name="alocacao_unica",
+                violation_error_message="Esse professor já está alocado nessa escola. Edite a alocação que já existe.",
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+        if not (self.professor_id and self.escola_id and self.horas_semanais):
+            return
+        professor = self.professor
+        if not professor.ativo:
+            raise ValidationError({"professor": "Esse professor está inativo."})
+        if self.horas_semanais > professor.carga_horaria_semanal:
+            raise ValidationError({"horas_semanais": (
+                f"{professor.nome} tem carga de {professor.carga_horaria_semanal} horas: "
+                "não dá pra cumprir mais que isso numa escola só."
+            )})
+        # A soma das escolas não passa da carga do professor.
+        outras = professor.alocacoes.exclude(pk=self.pk).select_related("escola")
+        usadas = sum(alocacao.horas_semanais for alocacao in outras)
+        if usadas + self.horas_semanais > professor.carga_horaria_semanal:
+            onde = ", ".join(f"{a.horas_semanais} h na {a.escola}" for a in outras)
+            sobram = max(professor.carga_horaria_semanal - usadas, 0)
+            raise ValidationError({"horas_semanais": (
+                f"{professor.nome} tem {professor.carga_horaria_semanal} horas e já está com {onde}. "
+                f"Sobram {sobram} horas."
+            )})
+        # Diminuir as horas não pode deixar as aulas que a escola já deu acima do novo limite.
+        if self.pk:
+            ano = timezone.localdate().year
+            aulas = self.aulas_no_ano(ano)
+            if aulas > self.limite_aulas:
+                raise ValidationError({"horas_semanais": (
+                    f"Com {self.horas_semanais} horas o limite nesta escola é {self.limite_aulas} aulas, "
+                    f"mas {professor.nome} já tem {aulas}. A escola precisa tirar aulas antes."
+                )})
+
+    @property
+    def limite_aulas(self):
+        """Máximo de aulas por semana nesta escola: 2/3 das horas dele aqui (mesma regra do Professor)."""
+        return self.horas_semanais * 2 // 3
+
+    def aulas_no_ano(self, ano_letivo, exceto=None):
+        """Aulas por semana que o professor tem nesta escola, no ano."""
+        lotacoes = Lotacao.objects.filter(
+            professor_id=self.professor_id, turma__escola_id=self.escola_id, turma__ano_letivo=ano_letivo
+        )
+        if exceto is not None and exceto.pk:
+            lotacoes = lotacoes.exclude(pk=exceto.pk)
+        return lotacoes.aggregate(total=Sum("aulas_semanais"))["total"] or 0
+
+    def __str__(self):
+        return f"{self.professor.nome} - {self.escola} ({self.get_funcao_display()})"
+
+
 class Lotacao(models.Model):
-    """Atribuição de aulas: qual professor dá qual matéria, em qual turma."""
+    """Atribuição de aulas: qual professor dá qual matéria, em qual turma.
+
+    Quem cadastra é a escola, e só com professores que o RH alocou nela (Alocacao).
+    """
 
     professor = models.ForeignKey(
         Professor, verbose_name="professor", on_delete=models.PROTECT, related_name="lotacoes"
@@ -215,6 +326,18 @@ class Lotacao(models.Model):
         if not professor.ativo:
             raise ValidationError({"professor": "Esse professor está inativo."})
 
+        # Regra 0: o RH tem que ter alocado o professor nesta escola, na função de professor.
+        alocacao = Alocacao.objects.filter(professor=professor, escola_id=turma.escola_id).first()
+        if alocacao is None:
+            raise ValidationError({"professor": (
+                f"{professor.nome} não está alocado na {turma.escola}. Peça ao RH para alocar."
+            )})
+        if alocacao.funcao != Alocacao.Funcao.PROFESSOR:
+            raise ValidationError({"professor": (
+                f"{professor.nome} está como {alocacao.get_funcao_display()} nesta escola. "
+                "Mude a função para Professor(a) antes de dar turmas a ele."
+            )})
+
         # Regra 1: a matéria tem que estar na matriz curricular da turma (Aula 3, DED).
         matriz = matriz_da_turma(turma)
         if matriz is None:
@@ -240,14 +363,15 @@ class Lotacao(models.Model):
             )
             raise ValidationError({"aulas_semanais": mensagem})
 
-        # Regra 3 (Lei 11.738/2008): o professor não passa de 2/3 da carga com alunos.
-        antes = professor.aulas_no_ano(turma.ano_letivo, exceto=self)
+        # Regra 3 (Lei 11.738/2008): o professor não passa de 2/3 das horas com alunos.
+        # Conta só esta escola, com as horas que o RH deu a ele aqui.
+        antes = alocacao.aulas_no_ano(turma.ano_letivo, exceto=self)
         depois = antes + self.aulas_semanais
-        if depois > professor.limite_aulas:
+        if depois > alocacao.limite_aulas:
             mensagem = (
-                f"{professor.nome} ficaria com {depois} aulas por semana. "
-                f"Com {professor.carga_horaria_semanal} horas, o limite é "
-                f"{professor.limite_aulas} aulas (2/3 da carga, Lei 11.738/2008). "
+                f"{professor.nome} ficaria com {depois} aulas por semana nesta escola. "
+                f"Com {alocacao.horas_semanais} horas aqui, o limite é "
+                f"{alocacao.limite_aulas} aulas (2/3 da carga, Lei 11.738/2008). "
                 f"Hoje já tem {antes}."
             )
             raise ValidationError({"aulas_semanais": mensagem})

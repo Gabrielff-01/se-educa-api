@@ -17,8 +17,9 @@ from rest_framework.response import Response
 from calendario.models import UNIDADES_POR_ANO, calendario_da_escola
 from contas.models import Usuario
 from contas.permissoes import eh_do_setor
+from documentos.models import Documento
 from rede.models import Escola, Regional, Turma
-from rh.models import Afastamento, Lotacao, Professor, matriz_da_turma
+from rh.models import Afastamento, Alocacao, Lotacao, Professor, matriz_da_turma
 from solicitacoes.models import Mensagem
 
 from .acesso import aluno_pedido, alunos_visiveis, eh_secretaria, pode_cuidar_da_escola, professor_de
@@ -423,23 +424,39 @@ def painel_escola(request):
 
 @api_view(["GET"])
 def professores_da_escola(request):
-    """GET /api/escola/professores/: quem dá aula na escola (sem CPF: isso é só com o RH)."""
+    """GET /api/escola/professores/: quem o RH alocou na escola, a função e as turmas de cada um.
+
+    Sem CPF nem matrícula (isso é só com o RH). É a base da tela "Professores e funções" da escola.
+    """
     escola = escola_pedida(request)
     ano = ano_pedido(request)
+    alocacoes = Alocacao.objects.filter(escola=escola).select_related("professor").order_by("professor__nome")
     lotacoes = Lotacao.objects.filter(turma__escola=escola, turma__ano_letivo=ano).select_related(
-        "professor", "materia", "turma__serie")
+        "materia", "turma__serie").annotate(no_quadro=Count("horarios")).order_by(
+        "turma__serie__ordem", "turma__letra", "materia__nome")
     por_professor = defaultdict(list)
     for lotacao in lotacoes:
-        por_professor[lotacao.professor].append(lotacao)
+        por_professor[lotacao.professor_id].append(lotacao)
     resposta = []
-    for professor, lista in sorted(por_professor.items(), key=lambda par: par[0].nome):
+    for alocacao in alocacoes:
+        professor = alocacao.professor
+        lista = por_professor.get(professor.id, [])
         afastamento = professor.afastamentos.filter(inicio__lte=hoje(), fim__gte=hoje()).first()
         resposta.append({
-            "id": professor.id, "nome": professor.nome, "carga": professor.carga_horaria_semanal,
+            "id": professor.id, "alocacao": alocacao.id, "nome": professor.nome,
+            "carga": professor.carga_horaria_semanal, "horas_na_escola": alocacao.horas_semanais,
             "vinculo_nome": professor.get_vinculo_display(),
+            "funcao": alocacao.funcao, "funcao_nome": alocacao.get_funcao_display(),
+            "portaria_funcao": alocacao.portaria_funcao,
             "materias": sorted({lot.materia.nome for lot in lista}),
             "turmas": sorted({nome_turma(lot.turma) for lot in lista}),
             "aulas_na_escola": sum(lot.aulas_semanais for lot in lista),
+            "limite_aulas": alocacao.limite_aulas,
+            "lotacoes": [
+                {"id": lot.id, "turma": lot.turma_id, "turma_nome": nome_turma(lot.turma), "materia": lot.materia_id,
+                 "materia_nome": lot.materia.nome, "aulas_semanais": lot.aulas_semanais, "no_quadro": lot.no_quadro}
+                for lot in lista
+            ],
             "afastamento": {"tipo_nome": afastamento.get_tipo_display(), "fim": afastamento.fim} if afastamento else None,
         })
     return Response(resposta)
@@ -594,7 +611,7 @@ def carencias(escolas, ano):
                 lista.append({
                     "tipo": "sem_professor", "escola_nome": turma.escola.nome, "turma": turma.id,
                     "turma_nome": nome_turma(turma), "materia_nome": item.materia.nome, "aulas": faltam,
-                    "professor_nome": None, "motivo": "Sem professor lotado",
+                    "professor_nome": None, "motivo": "Sem professor na turma",
                 })
     return lista
 
@@ -641,12 +658,12 @@ def rh_painel(request):
     """GET /api/rh/painel/: números do quadro de professores."""
     so_secretaria(request)
     ano = ano_pedido(request)
-    professores = list(Professor.objects.filter(ativo=True))
-    perto, sem_lotacao = [], []
+    professores = list(Professor.objects.filter(ativo=True).annotate(escolas=Count("alocacoes")))
+    perto, sem_escola = [], []
     for professor in professores:
         aulas = professor.aulas_no_ano(ano)
-        if aulas == 0:
-            sem_lotacao.append(professor.nome)
+        if professor.escolas == 0:
+            sem_escola.append(professor.nome)  # o RH ainda não alocou em nenhuma escola
         elif aulas >= professor.limite_aulas * 0.8:
             perto.append({"nome": professor.nome, "aulas": aulas, "limite": professor.limite_aulas})
     lista = carencias(Escola.objects.all(), ano)
@@ -658,7 +675,7 @@ def rh_painel(request):
         "temporarios": sum(1 for p in professores if p.vinculo == Professor.Vinculo.TEMPORARIO),
         "afastados_hoje": Afastamento.objects.filter(inicio__lte=hoje(), fim__gte=hoje()).count(),
         "perto_do_limite": perto,
-        "sem_lotacao": sem_lotacao,
+        "sem_escola": sem_escola,
         "aulas_sem_professor": sum(c["aulas"] for c in lista if c["tipo"] == "sem_professor"),
         "aulas_para_substituir": sum(c["aulas"] for c in lista if c["tipo"] == "substituicao"),
     })
@@ -702,6 +719,7 @@ def notificacoes(request):
                                   "texto": f"{tarefa.materia}: {tarefa.titulo} (até {tarefa.prazo:%d/%m})",
                                   "tela": "tarefas"})
     itens += avisos_de_pedidos(usuario, desde)
+    itens += avisos_de_documentos(usuario, desde)
     for comunicado in comunicados_visiveis(usuario).filter(criado_em__gte=desde).exclude(autor=usuario)[:30]:
         itens.append({"id": f"comunicado-{comunicado.id}", "tipo": "comunicado", "quando": comunicado.criado_em,
                       "titulo": comunicado.titulo, "texto": comunicado.texto[:140], "tela": "comunicados"})
@@ -735,3 +753,26 @@ def avisos_de_pedidos(usuario, desde):
                       "texto": f"{pedido.titulo} · {m.texto[:120]}", "tela": tela})
     return itens
 
+
+def avisos_de_documentos(usuario, desde):
+    """Documentos enviados à escola: a escola é avisada do que chegou; a família, da resposta."""
+    if usuario.perfil == Perfil.ESCOLA and usuario.escola_id:
+        chegaram = Documento.objects.filter(escola_id=usuario.escola_id, enviado_em__gte=desde).defer("arquivo")
+        return [
+            {"id": f"documento-{d.id}", "tipo": "documento", "quando": d.enviado_em,
+             "titulo": "Documento recebido", "texto": f"{d.aluno.nome} · {d.get_tipo_display()}",
+             "tela": "escDocumentos"}
+            for d in chegaram.select_related("aluno")[:30]
+        ]
+    if usuario.perfil in (Perfil.ALUNO, Perfil.RESPONSAVEL):
+        analisados = Documento.objects.filter(aluno__in=alunos_visiveis(usuario), analisado_em__gte=desde)
+        itens = []
+        for d in analisados.defer("arquivo").select_related("aluno")[:30]:
+            prefixo = f"{d.aluno.nome.split()[0]} · " if usuario.perfil == Perfil.RESPONSAVEL else ""
+            situacao = "aceito" if d.status == Documento.Status.ACEITO else "recusado"
+            texto = d.get_tipo_display() + (f": {d.resposta}" if d.resposta else "")
+            itens.append({"id": f"documento-{d.id}", "tipo": "documento", "quando": d.analisado_em,
+                          "titulo": f"{prefixo}Documento {situacao} pela escola", "texto": texto[:160],
+                          "tela": "documentos"})
+        return itens
+    return []
