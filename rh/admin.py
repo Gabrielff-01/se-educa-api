@@ -1,11 +1,11 @@
 from django.contrib import admin
 from django.utils import timezone
 
-from .models import Afastamento, Lotacao, Professor
+from .models import Afastamento, Alocacao, Lotacao, Professor
 
 
 class LotacaoInline(admin.TabularInline):
-    """Só mostra as lotações do professor. Cadastrar é na tela de Lotações,
+    """Só mostra as aulas do professor. Cadastrar é na tela da escola,
     porque lá cada lotação passa pelas regras uma de cada vez."""
 
     model = Lotacao
@@ -23,6 +23,13 @@ class LotacaoInline(admin.TabularInline):
         return False
 
 
+class AlocacaoInline(admin.TabularInline):
+    model = Alocacao
+    fields = ("escola", "horas_semanais", "funcao", "portaria", "desde")
+    extra = 0
+    autocomplete_fields = ("escola",)
+
+
 @admin.register(Professor)
 class ProfessorAdmin(admin.ModelAdmin):
     list_display = (
@@ -32,7 +39,7 @@ class ProfessorAdmin(admin.ModelAdmin):
     list_filter = ("vinculo", "carga_horaria_semanal", "ativo")
     search_fields = ("nome", "matricula", "cpf")
     search_help_text = "Busque por nome, matrícula ou CPF (só os números)."
-    inlines = [LotacaoInline]
+    inlines = [AlocacaoInline, LotacaoInline]
 
     @admin.display(description="CPF", ordering="cpf")
     def cpf_formatado(self, obj):
@@ -42,6 +49,15 @@ class ProfessorAdmin(admin.ModelAdmin):
     def em_sala(self, obj):
         ano = timezone.localdate().year
         return f"{obj.aulas_no_ano(ano)} de {obj.limite_aulas}"
+
+
+@admin.register(Alocacao)
+class AlocacaoAdmin(admin.ModelAdmin):
+    list_display = ("professor", "escola", "horas_semanais", "funcao", "portaria", "desde")
+    list_filter = ("funcao", "horas_semanais", "escola__regional")
+    search_fields = ("professor__nome", "professor__matricula", "escola__nome")
+    autocomplete_fields = ("professor", "escola")
+    list_select_related = ("professor", "escola")
 
 
 @admin.register(Lotacao)

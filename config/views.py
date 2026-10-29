@@ -8,7 +8,7 @@ from calendario.models import DIAS_LETIVOS_MINIMOS, Evento
 from contas.models import Usuario
 from regulacao.models import AtoAutorizativo, Matriz
 from rede.models import Escola, Materia, Turma
-from rh.models import Afastamento, Professor
+from rh.models import Afastamento, Alocacao, Professor
 
 
 def inicio(request):
@@ -32,6 +32,7 @@ def opcoes(request):
         "perfis": lista(Usuario.Perfil.choices),
         "setores": lista(Usuario.Setor.choices),
         "dependencias": lista(Escola.Dependencia.choices),
+        "zonas": lista(Escola.Zona.choices),
         "areas": lista(Materia.Area.choices),
         "turnos": lista(Turma.Turno.choices),
         "tipos_ato": lista(AtoAutorizativo.Tipo.choices),
@@ -39,6 +40,7 @@ def opcoes(request):
         "tipos_evento": lista(Evento.Tipo.choices),
         "cargas": lista(Professor.Carga.choices),
         "vinculos": lista(Professor.Vinculo.choices),
+        "funcoes": lista(Alocacao.Funcao.choices),
         "tipos_afastamento": lista(Afastamento.Tipo.choices),
         "programas": lista(Aluno.Programa.choices[1:]),  # sem o "Nenhum"
         "parentescos": lista(Vinculo.Parentesco.choices),

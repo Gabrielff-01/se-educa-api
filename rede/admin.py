@@ -11,9 +11,9 @@ class RegionalAdmin(admin.ModelAdmin):
 
 @admin.register(Escola)
 class EscolaAdmin(admin.ModelAdmin):
-    list_display = ("nome", "codigo_inep", "municipio", "regional", "dependencia", "ativa")
-    list_filter = ("regional", "dependencia", "ativa")
-    search_fields = ("nome", "codigo_inep", "municipio")
+    list_display = ("nome", "codigo_inep", "municipio", "regional", "zona", "dependencia", "ativa")
+    list_filter = ("regional", "dependencia", "zona", "ativa")
+    search_fields = ("nome", "codigo_inep", "cnpj", "municipio")
     autocomplete_fields = ("regional",)
 
 
