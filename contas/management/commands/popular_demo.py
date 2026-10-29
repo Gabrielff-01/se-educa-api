@@ -16,12 +16,23 @@ from django.db import transaction
 from academico.demo import DemoAcademica, cpf_ficticio
 from calendario.models import CalendarioLetivo, Evento
 from contas.models import Usuario
+from documentos.demo import criar_atestados_aceitos_demo, criar_documentos_demo
 from rede.models import Curso, Escola, Materia, Regional, Serie, Turma
 from regulacao.models import AtoAutorizativo, ItemMatriz, Matriz, Oferta
-from rh.models import Lotacao, Professor
+from rh.models import Alocacao, Lotacao, Professor
 from solicitacoes.demo import criar_pedidos_demo
 
 ANO = 2026
+
+
+def cnpj_ficticio(base):
+    """Completa 12 números com os 2 dígitos verificadores (o CNPJ passa na conta, mas não existe)."""
+    numeros = base
+    for tamanho in (12, 13):
+        pesos = list(range(tamanho - 7, 1, -1)) + list(range(9, 1, -1))
+        resto = sum(int(numeros[i]) * pesos[i] for i in range(tamanho)) % 11
+        numeros += str(0 if resto < 2 else 11 - resto)
+    return numeros
 
 MATERIAS = [
     ("Português", Materia.Area.LINGUAGENS),
@@ -84,6 +95,10 @@ class Command(BaseCommand):
         DemoAcademica(ANO, self.avisos, medio, fundamental).rodar()
         # Pedidos da escola1 para a DIES (solicitacoes/demo.py)
         criar_pedidos_demo(ANO)
+        # Documentos que a Maria José mandou para as escolas dos filhos (documentos/demo.py)
+        criar_documentos_demo()
+        # Um atestado e uma justificativa já aceitos (aparecem em amarelo na chamada do professor1)
+        criar_atestados_aceitos_demo()
 
         for aviso in self.avisos:
             self.stdout.write(self.style.WARNING(f"Aviso: {aviso}"))
@@ -109,14 +124,38 @@ class Command(BaseCommand):
             "murilo": ("28034567", "Centro de Excelência Murilo Braga", dre03, "Itabaiana",
                        "Centro"),
         }
+        # Dados cadastrais da ficha (como no site da SEDUC). Todos FICTÍCIOS,
+        # menos a localização no mapa, que é aproximada do lugar de verdade de cada escola.
+        cadastro = {
+            "atheneu": {"cnpj": cnpj_ficticio("130012340001"), "telefone": "79-3179-0101",
+                        "email": "atheneu@se-educa.exemplo", "numero_salas": 18, "endereco": "Praça Graccho Cardoso",
+                        "numero": "S/N", "cep": "49010-000", "latitude": -10.9113, "longitude": -37.0517},
+            "goncalo": {"cnpj": cnpj_ficticio("130023450001"), "telefone": "79-3179-0202",
+                        "email": "goncalo@se-educa.exemplo", "numero_salas": 11, "endereco": "Rua Dom José Thomaz",
+                        "numero": "450", "complemento": "Próximo à praça", "cep": "49050-000",
+                        "latitude": -10.9236, "longitude": -37.0611},
+            "murilo": {"cnpj": cnpj_ficticio("130034560001"), "telefone": "79-3431-0303",
+                       "email": "murilo@se-educa.exemplo", "numero_salas": 9, "endereco": "Avenida Otoniel Dórea",
+                       "numero": "120", "cep": "49500-000", "comodato": True,
+                       "latitude": -10.6852, "longitude": -37.4253},
+        }
         escolas = {}
         for chave, (inep, nome, regional, municipio, bairro) in dados.items():
-            escolas[chave], _ = Escola.objects.get_or_create(
+            escola, _ = Escola.objects.get_or_create(
                 codigo_inep=inep,
                 defaults={
                     "nome": nome, "regional": regional, "municipio": municipio, "bairro": bairro,
                 },
             )
+            # Completa só o que estiver vazio: no banco do Render as escolas já existem.
+            mudou = False
+            for campo, valor in cadastro[chave].items():
+                if not getattr(escola, campo):
+                    setattr(escola, campo, valor)
+                    mudou = True
+            if mudou:
+                escola.save()
+            escolas[chave] = escola
         return escolas
 
     def criar_cursos(self):
@@ -251,6 +290,11 @@ class Command(BaseCommand):
             ("100002-2", "Fernanda Lima Barreto", "234567892", 40, "efetivo", None),
             ("100003-3", "José Ricardo Santos", "345678913", 20, "temporario", None),
             ("100004-4", "Mariana Costa Prado", "456789124", 40, "efetivo", None),
+            # Equipe diretiva (alocados pelo RH; a escola definiu a função)
+            ("100006-6", "Ana Cristina Rocha", "678912346", 40, "efetivo", None),
+            ("100007-7", "Roberto Alves Neto", "789123457", 40, "efetivo", None),
+            ("100008-8", "Luciana Freitas Mota", "891234568", 40, "efetivo", None),
+            ("100009-9", "Antônio Carlos Lima", "912345679", 40, "efetivo", None),
         ]
         criados = {}
         for matricula, nome, base_cpf, carga, vinculo, username in professores:
@@ -261,6 +305,27 @@ class Command(BaseCommand):
                     "nome": nome, "cpf": cpf_ficticio(base_cpf), "carga_horaria_semanal": carga,
                     "vinculo": vinculo, "usuario": usuario, "data_admissao": date(2018, 3, 1),
                 },
+            )
+
+        # RH: em qual escola cada um trabalha (horas na escola). A Mariana divide 20 h + 20 h.
+        alocacoes = [
+            ("100001-1", "atheneu", 40, "professor", ""),
+            ("100002-2", "atheneu", 40, "professor", ""),
+            ("100003-3", "atheneu", 20, "professor", ""),
+            ("100004-4", "atheneu", 20, "professor", ""),
+            ("100004-4", "goncalo", 20, "professor", ""),
+            ("100006-6", "atheneu", 40, "diretor", "0428/2025"),
+            ("100007-7", "atheneu", 40, "coordenador", "3161/2025"),
+            ("100008-8", "goncalo", 40, "diretor", "0512/2025"),
+            ("100009-9", "murilo", 40, "diretor", "0377/2025"),
+        ]
+        escolas = {escola.codigo_inep: escola for escola in Escola.objects.all()}
+        por_chave = {"atheneu": "28012345", "goncalo": "28023456", "murilo": "28034567"}
+        for matricula, chave, horas, funcao, portaria in alocacoes:
+            Alocacao.objects.get_or_create(
+                professor=criados[matricula], escola=escolas[por_chave[chave]],
+                defaults={"horas_semanais": horas, "funcao": funcao, "portaria_funcao": portaria,
+                          "desde": date(2025, 2, 3)},
             )
 
         atheneu = [("atheneu", "1em", "A"), ("atheneu", "1em", "B"), ("atheneu", "2em", "A"),

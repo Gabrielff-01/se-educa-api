@@ -14,14 +14,29 @@ class RegionalSerializer(ModelSerializerComRegras):
 class EscolaSerializer(ModelSerializerComRegras):
     regional_nome = serializers.CharField(source="regional.nome", read_only=True)
     dependencia_nome = serializers.CharField(source="get_dependencia_display", read_only=True)
+    zona_nome = serializers.CharField(source="get_zona_display", read_only=True)
+    cnpj_formatado = serializers.CharField(read_only=True)
+    cep_formatado = serializers.CharField(read_only=True)
 
     class Meta:
         model = Escola
         fields = [
-            "id", "nome", "codigo_inep", "dependencia", "dependencia_nome",
-            "regional", "regional_nome", "municipio", "bairro", "endereco",
+            "id", "nome", "codigo_inep", "cnpj", "cnpj_formatado", "dependencia", "dependencia_nome",
+            "regional", "regional_nome", "telefone", "email", "numero_salas", "zona", "zona_nome", "comodato",
+            "endereco", "numero", "complemento", "bairro", "municipio", "cep", "cep_formatado",
             "latitude", "longitude", "ativa",
         ]
+        # O DRF tem mensagem própria para mínimo/máximo; aqui fica a explicação de Sergipe.
+        extra_kwargs = {
+            "latitude": {"error_messages": {
+                "min_value": "Latitude fora de Sergipe (vai de -11,7 a -9,4). Confira se não trocou com a longitude.",
+                "max_value": "Latitude fora de Sergipe (vai de -11,7 a -9,4). Confira se não trocou com a longitude.",
+            }},
+            "longitude": {"error_messages": {
+                "min_value": "Longitude fora de Sergipe (vai de -38,3 a -36,3). Confira se não trocou com a latitude.",
+                "max_value": "Longitude fora de Sergipe (vai de -38,3 a -36,3). Confira se não trocou com a latitude.",
+            }},
+        }
 
 
 class SerieSerializer(ModelSerializerComRegras):

@@ -67,6 +67,7 @@ INSTALLED_APPS = [
     "academico",
     "auditoria",
     "solicitacoes",
+    "documentos",
 ]
 
 MIDDLEWARE = [

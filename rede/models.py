@@ -3,6 +3,34 @@ from django.core.validators import MaxValueValidator, MinValueValidator, RegexVa
 from django.db import models
 
 
+def so_digitos(texto):
+    """Tira pontos, barras e traços. Ex.: 05.486.302/0001-35 vira 05486302000135."""
+    return "".join(c for c in (texto or "") if c.isdigit())
+
+
+def validar_cnpj(valor):
+    """Confere os 2 dígitos verificadores do CNPJ (mesma ideia do CPF, com outros pesos)."""
+    cnpj = so_digitos(valor)
+    if len(cnpj) != 14:
+        raise ValidationError("CNPJ inválido: tem que ter 14 números.")
+    if cnpj == cnpj[0] * 14:
+        raise ValidationError("CNPJ inválido.")
+    # 1º dígito: pesos 5,4,3,2,9,8,7,6,5,4,3,2 nos 12 primeiros números.
+    # 2º dígito: pesos 6,5,4,3,2,9,8,7,6,5,4,3,2 nos 13 primeiros.
+    for tamanho in (12, 13):
+        pesos = list(range(tamanho - 7, 1, -1)) + list(range(9, 1, -1))
+        soma = sum(int(cnpj[i]) * pesos[i] for i in range(tamanho))
+        resto = soma % 11
+        digito = 0 if resto < 2 else 11 - resto
+        if digito != int(cnpj[tamanho]):
+            raise ValidationError("CNPJ inválido: os dígitos verificadores não batem.")
+
+
+def validar_cep(valor):
+    if len(so_digitos(valor)) != 8:
+        raise ValidationError("O CEP tem 8 números. Ex.: 49044-156.")
+
+
 class Regional(models.Model):
     """Diretoria Regional de Educação (DRE). Ex.: DEA, DRE 01."""
 
@@ -24,6 +52,10 @@ class Escola(models.Model):
         FEDERAL = "federal", "Federal"
         PRIVADA = "privada", "Privada"
 
+    class Zona(models.TextChoices):
+        URBANA = "urbana", "Urbana"
+        RURAL = "rural", "Rural"
+
     nome = models.CharField(verbose_name="nome", max_length=150)
     codigo_inep = models.CharField(
         verbose_name="código INEP",
@@ -43,17 +75,62 @@ class Escola(models.Model):
         on_delete=models.PROTECT,
         related_name="escolas",
     )
+    # Dados cadastrais, como na ficha da escola do site da SEDUC (fonte: SIAE/Escola Eficiente).
+    cnpj = models.CharField(
+        verbose_name="CNPJ", max_length=18, blank=True, validators=[validar_cnpj],
+        help_text="Pode digitar com ou sem pontos, barra e traço.",
+    )
+    telefone = models.CharField(
+        verbose_name="telefone", max_length=20, blank=True,
+        validators=[RegexValidator(r"^[0-9() -]{8,20}$", "Use só números, espaço, traço e parênteses. Ex.: 79-32059518.")],
+    )
+    email = models.EmailField(verbose_name="e-mail", blank=True)
+    numero_salas = models.PositiveSmallIntegerField(
+        verbose_name="nº de salas de aula", null=True, blank=True, validators=[MaxValueValidator(200)],
+    )
+    zona = models.CharField(verbose_name="zona", max_length=6, choices=Zona.choices, default=Zona.URBANA)
+    comodato = models.BooleanField(
+        verbose_name="prédio em comodato", default=False,
+        help_text="Marque se o prédio é emprestado (de outro órgão, município, igreja...).",
+    )
     municipio = models.CharField(verbose_name="município", max_length=80)
     bairro = models.CharField(verbose_name="bairro", max_length=80, blank=True)
-    endereco = models.CharField(verbose_name="endereço", max_length=200, blank=True)
-    latitude = models.FloatField(verbose_name="latitude", null=True, blank=True)
-    longitude = models.FloatField(verbose_name="longitude", null=True, blank=True)
+    endereco = models.CharField(verbose_name="endereço (logradouro)", max_length=200, blank=True)
+    numero = models.CharField(verbose_name="número", max_length=10, blank=True, help_text='Ex.: 120 ou "S/N".')
+    complemento = models.CharField(verbose_name="complemento", max_length=80, blank=True)
+    cep = models.CharField(verbose_name="CEP", max_length=9, blank=True, validators=[validar_cep])
+    # Localização no mapa. A faixa é a de Sergipe: pega quem trocou latitude por longitude.
+    latitude = models.FloatField(
+        verbose_name="latitude", null=True, blank=True,
+        validators=[MinValueValidator(-11.7, "Latitude fora de Sergipe (vai de -11,7 a -9,4)."),
+                    MaxValueValidator(-9.4, "Latitude fora de Sergipe (vai de -11,7 a -9,4).")],
+    )
+    longitude = models.FloatField(
+        verbose_name="longitude", null=True, blank=True,
+        validators=[MinValueValidator(-38.3, "Longitude fora de Sergipe (vai de -38,3 a -36,3)."),
+                    MaxValueValidator(-36.3, "Longitude fora de Sergipe (vai de -38,3 a -36,3).")],
+    )
     ativa = models.BooleanField(verbose_name="ativa", default=True)
 
     class Meta:
         ordering = ["nome"]
         verbose_name = "escola"
         verbose_name_plural = "escolas"
+
+    def save(self, *args, **kwargs):
+        # Guarda só os números (a tela formata na hora de mostrar).
+        self.cnpj = so_digitos(self.cnpj)
+        self.cep = so_digitos(self.cep)
+        super().save(*args, **kwargs)
+
+    @property
+    def cnpj_formatado(self):
+        c = self.cnpj
+        return f"{c[:2]}.{c[2:5]}.{c[5:8]}/{c[8:12]}-{c[12:]}" if len(c) == 14 else c
+
+    @property
+    def cep_formatado(self):
+        return f"{self.cep[:5]}-{self.cep[5:]}" if len(self.cep) == 8 else self.cep
 
     def __str__(self):
         return self.nome

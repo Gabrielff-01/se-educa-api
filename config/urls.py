@@ -26,6 +26,7 @@ from academico.views import (
 from auditoria.views import RegistroViewSet
 from calendario.views import CalendarioLetivoViewSet, EventoViewSet
 from contas.views import EuView, LoginView
+from documentos.views import DocumentoViewSet
 from rede.views import (
     CursoViewSet,
     EscolaViewSet,
@@ -35,7 +36,7 @@ from rede.views import (
     TurmaViewSet,
 )
 from regulacao.views import AtoAutorizativoViewSet, MatrizViewSet, OfertaViewSet
-from rh.views import AfastamentoViewSet, LotacaoViewSet, ProfessorViewSet
+from rh.views import AfastamentoViewSet, AlocacaoViewSet, LotacaoViewSet, ProfessorViewSet
 from solicitacoes.views import SolicitacaoViewSet
 
 from .views import inicio, opcoes
@@ -62,7 +63,8 @@ router.register("ofertas", OfertaViewSet)
 router.register("matrizes", MatrizViewSet)
 # RH
 router.register("professores", ProfessorViewSet)
-router.register("lotacoes", LotacaoViewSet)
+router.register("alocacoes", AlocacaoViewSet, basename="alocacao")
+router.register("lotacoes", LotacaoViewSet, basename="lotacao")
 router.register("afastamentos", AfastamentoViewSet)
 # Acadêmico (escola, professor, aluno e família)
 router.register("alunos", AlunoViewSet, basename="aluno")
@@ -80,6 +82,7 @@ router.register("cardapios", CardapioViewSet)
 router.register("registros", RegistroViewSet, basename="registro")
 # Pedidos escola → DIES (com conversa)
 router.register("solicitacoes", SolicitacaoViewSet, basename="solicitacao")
+router.register("documentos", DocumentoViewSet, basename="documento")
 
 urlpatterns = [
     path("", inicio),

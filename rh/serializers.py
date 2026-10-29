@@ -3,7 +3,7 @@ from rest_framework import serializers
 
 from config.api import ModelSerializerComRegras
 
-from .models import Afastamento, Lotacao, Professor
+from .models import Afastamento, Alocacao, Lotacao, Professor
 
 
 class ProfessorSerializer(ModelSerializerComRegras):
@@ -34,6 +34,47 @@ class ProfessorSerializer(ModelSerializerComRegras):
         if atual is None:
             return None
         return {"tipo_nome": atual.get_tipo_display(), "fim": atual.fim}
+
+
+class AlocacaoSerializer(ModelSerializerComRegras):
+    """Professor alocado numa escola. Sem CPF e sem matrícula: a escola também lê isto."""
+
+    professor_nome = serializers.CharField(source="professor.nome", read_only=True)
+    carga_professor = serializers.IntegerField(source="professor.carga_horaria_semanal", read_only=True)
+    vinculo_nome = serializers.CharField(source="professor.get_vinculo_display", read_only=True)
+    escola_nome = serializers.CharField(source="escola.nome", read_only=True)
+    horas_nome = serializers.CharField(source="get_horas_semanais_display", read_only=True)
+    funcao_nome = serializers.CharField(source="get_funcao_display", read_only=True)
+    limite_aulas = serializers.IntegerField(read_only=True)
+    aulas_ano_atual = serializers.SerializerMethodField()
+    afastamento_atual = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Alocacao
+        fields = [
+            "id", "professor", "professor_nome", "carga_professor", "vinculo_nome", "escola", "escola_nome",
+            "horas_semanais", "horas_nome", "portaria", "desde", "funcao", "funcao_nome", "portaria_funcao",
+            "limite_aulas", "aulas_ano_atual", "afastamento_atual",
+        ]
+        # A função é da escola: muda pela ação /funcao/, não no cadastro do RH.
+        read_only_fields = ["funcao", "portaria_funcao"]
+
+    def validate(self, attrs):
+        # O RH pode corrigir horas e portaria, mas não trocar o professor ou a escola de uma alocação.
+        if self.instance is not None:
+            for campo in ("professor", "escola"):
+                if campo in attrs and attrs[campo] != getattr(self.instance, campo):
+                    raise serializers.ValidationError(
+                        {campo: "Não dá pra trocar. Tire esta alocação e crie outra."})
+        return super().validate(attrs)
+
+    def get_aulas_ano_atual(self, alocacao):
+        return alocacao.aulas_no_ano(timezone.localdate().year)
+
+    def get_afastamento_atual(self, alocacao):
+        hoje = timezone.localdate()
+        atual = alocacao.professor.afastamentos.filter(inicio__lte=hoje, fim__gte=hoje).first()
+        return {"tipo_nome": atual.get_tipo_display(), "fim": atual.fim} if atual else None
 
 
 class LotacaoSerializer(ModelSerializerComRegras):
