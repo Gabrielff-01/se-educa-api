@@ -69,14 +69,17 @@ class ItemMatrizSerializer(serializers.ModelSerializer):
 class MatrizSerializer(ModelSerializerComRegras):
     """Matriz com as matérias dentro. O React manda tudo de uma vez:
 
-    {"serie": 1, "ano_letivo": 2026, "jornada": "parcial", "duracao_aula_minutos": 50,
+    {"serie": 1, "ano_letivo": 2026, "jornada": "parcial", "escola": null, "duracao_aula_minutos": 50,
      "semanas_letivas": 40, "itens": [{"materia": 2, "aulas_semanais": 5}, ...]}
+
+    escola null = matriz da rede; com escola = matriz específica daquela escola.
     """
 
     itens = ItemMatrizSerializer(many=True)
     serie_nome = serializers.CharField(source="serie.nome", read_only=True)
     curso_nome = serializers.CharField(source="serie.curso.nome", read_only=True)
     jornada_nome = serializers.CharField(source="get_jornada_display", read_only=True)
+    escola_nome = serializers.CharField(source="escola.nome", read_only=True, default=None)
     total_aulas_semanais = serializers.IntegerField(read_only=True)
     carga_horaria_anual = serializers.FloatField(read_only=True)
     carga_minima = serializers.IntegerField(
@@ -88,15 +91,15 @@ class MatrizSerializer(ModelSerializerComRegras):
         model = Matriz
         fields = [
             "id", "serie", "serie_nome", "curso_nome", "ano_letivo", "jornada", "jornada_nome",
-            "duracao_aula_minutos", "semanas_letivas", "itens", "total_aulas_semanais",
+            "escola", "escola_nome", "duracao_aula_minutos", "semanas_letivas", "itens", "total_aulas_semanais",
             "carga_horaria_anual", "carga_minima", "cumpre_minimo",
         ]
 
     def validate(self, attrs):
         matriz = self.instance
         if matriz is not None:
-            # Igual ao admin: série, ano e jornada travados, porque as lotações dependem deles.
-            for campo in ("serie", "ano_letivo", "jornada"):
+            # Igual ao admin: série, ano, jornada e escola travados, porque as lotações dependem deles.
+            for campo in ("serie", "ano_letivo", "jornada", "escola"):
                 if campo in attrs and attrs[campo] != getattr(matriz, campo):
                     raise serializers.ValidationError({campo: "Não dá pra mudar depois de criada."})
 

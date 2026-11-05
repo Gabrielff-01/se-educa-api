@@ -1,11 +1,18 @@
 from django.contrib import admin
 
-from .models import Curso, Escola, Materia, Regional, Serie, Turma
+from .models import Curso, Escola, Materia, Municipio, Regional, Serie, Turma
 
 
 @admin.register(Regional)
 class RegionalAdmin(admin.ModelAdmin):
-    list_display = ("nome",)
+    list_display = ("nome", "sede")
+    search_fields = ("nome",)
+
+
+@admin.register(Municipio)
+class MunicipioAdmin(admin.ModelAdmin):
+    list_display = ("nome", "regional")
+    list_filter = ("regional",)
     search_fields = ("nome",)
 
 

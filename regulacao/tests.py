@@ -67,6 +67,31 @@ class MatrizAPITest(APITestCase):
         )
         self.assertEqual(resposta.status_code, 400)
 
+    def test_matriz_da_escola_vale_no_lugar_da_rede(self):
+        from rede.models import Turma
+        from rh.models import matriz_da_turma
+        murilo = Escola.objects.get(codigo_inep="28034567")
+        atheneu = Escola.objects.get(codigo_inep="28012345")
+        primeira = Serie.objects.get(curso__nome="Ensino Médio", ordem=1)
+        turma_murilo = Turma.objects.filter(escola=murilo, serie=primeira).first()
+        turma_atheneu = Turma.objects.filter(escola=atheneu, serie=primeira).first()
+        self.assertEqual(matriz_da_turma(turma_murilo).escola, murilo)  # a própria (demo: 6 de Matemática)
+        self.assertIsNone(matriz_da_turma(turma_atheneu).escola)  # a da rede
+
+    def test_matriz_de_escola_que_nao_oferece_a_serie(self):
+        murilo = Escola.objects.get(codigo_inep="28034567")  # só oferece Ensino Médio
+        resposta = self.client.post("/api/matrizes/", {**self.dados(4), "escola": murilo.pk}, format="json")
+        self.assertEqual(resposta.status_code, 400)
+        self.assertIn("não oferece", str(resposta.data["escola"]))
+
+    def test_uma_matriz_por_escola(self):
+        murilo = Escola.objects.get(codigo_inep="28034567")
+        primeira = Serie.objects.get(curso__nome="Ensino Médio", ordem=1)
+        dados = {**self.dados(4), "serie": primeira.pk, "escola": murilo.pk}
+        resposta = self.client.post("/api/matrizes/", dados, format="json")
+        self.assertEqual(resposta.status_code, 400)
+        self.assertIn("Essa escola já tem uma matriz", str(resposta.data))
+
     def test_dies_nao_cria_matriz(self):
         self.client.force_authenticate(Usuario.objects.get(username="dies1"))
         resposta = self.client.post("/api/matrizes/", self.dados(3), format="json")
@@ -109,6 +134,9 @@ class OfertaAPITest(APITestCase):
     def test_ato_de_curso_sem_curso(self):
         dados = {"escola": self.oferta.escola_id, "tipo": "reconhecimento",
                  "numero": "Res. 1/2026", "data_publicacao": "2026-01-10"}
+        # Os atos autorizativos passaram do DED para o DIES (pedido do mentor).
+        self.assertEqual(self.client.post("/api/atos/", dados, format="json").status_code, 403)
+        self.client.force_authenticate(Usuario.objects.get(username="dies1"))
         resposta = self.client.post("/api/atos/", dados, format="json")
         self.assertEqual(resposta.status_code, 400)
         self.assertIn("curso", resposta.data)

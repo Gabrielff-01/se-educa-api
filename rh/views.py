@@ -13,8 +13,14 @@ from contas.acessos import CriarAcessoSerializer, criar_login
 from contas.models import Usuario
 from contas.permissoes import SoSecretaria, edicao_do_setor, eh_do_setor
 
-from .models import Afastamento, Alocacao, Lotacao, Professor
-from .serializers import AfastamentoSerializer, AlocacaoSerializer, LotacaoSerializer, ProfessorSerializer
+from .models import Afastamento, Alocacao, Formacao, Lotacao, Professor
+from .serializers import (
+    AfastamentoSerializer,
+    AlocacaoSerializer,
+    FormacaoSerializer,
+    LotacaoSerializer,
+    ProfessorSerializer,
+)
 
 Perfil = Usuario.Perfil
 
@@ -43,7 +49,7 @@ def ano_atual():
 
 
 class ProfessorViewSet(RegistrarAlteracoesMixin, FiltrosMixin, viewsets.ModelViewSet):
-    queryset = Professor.objects.select_related("usuario")
+    queryset = Professor.objects.select_related("usuario").prefetch_related("formacoes__materias")
     serializer_class = ProfessorSerializer
     permission_classes = SO_RH_EDITA
     filtros = {"vinculo": "vinculo", "carga": "carga_horaria_semanal"}
@@ -57,6 +63,19 @@ class ProfessorViewSet(RegistrarAlteracoesMixin, FiltrosMixin, viewsets.ModelVie
         usuario = criar_login(professor, Usuario.Perfil.PROFESSOR, dados.validated_data)
         registrar(request.user, "criou", usuario, tipo="login", descricao=f"Login {usuario.username} de {professor.nome}")
         return Response(self.get_serializer(professor).data)
+
+
+class FormacaoViewSet(RegistrarAlteracoesMixin, FiltrosMixin, viewsets.ModelViewSet):
+    """Formação dos professores e as matérias que ela habilita. Só o RH cadastra. Filtro: ?professor=ID."""
+
+    queryset = Formacao.objects.select_related("professor").prefetch_related("materias")
+    serializer_class = FormacaoSerializer
+    permission_classes = SO_RH_EDITA
+    filtros = {"professor": "professor_id"}
+
+    def perform_destroy(self, formacao):
+        FormacaoSerializer.conferir_turmas(formacao.professor, tirando=formacao)
+        super().perform_destroy(formacao)
 
 
 class AlocacaoViewSet(RegistrarAlteracoesMixin, FiltrosMixin, viewsets.ModelViewSet):

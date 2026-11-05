@@ -35,11 +35,32 @@ class Regional(models.Model):
     """Diretoria Regional de Educação (DRE). Ex.: DEA, DRE 01."""
 
     nome = models.CharField(verbose_name="nome", max_length=60, unique=True)
+    sede = models.CharField(verbose_name="sede (município)", max_length=80, blank=True)
 
     class Meta:
         ordering = ["nome"]
         verbose_name = "regional"
         verbose_name_plural = "regionais"
+
+    def __str__(self):
+        return self.nome
+
+
+class Municipio(models.Model):
+    """Município de Sergipe e a regional (DRE) que cuida das escolas estaduais dele.
+
+    A lista dos 75 municípios já vem pronta (migration 0005). Se a SEDUC mudar um município
+    de DRE (como Maruim, que saiu da DRE 4 e foi pra DRE 8 em 2021), o DIES troca aqui.
+    """
+
+    nome = models.CharField(verbose_name="nome", max_length=80, unique=True)
+    regional = models.ForeignKey(Regional, verbose_name="regional", on_delete=models.PROTECT,
+                                 related_name="municipios")
+
+    class Meta:
+        ordering = ["nome"]
+        verbose_name = "município"
+        verbose_name_plural = "municípios"
 
     def __str__(self):
         return self.nome
@@ -116,6 +137,19 @@ class Escola(models.Model):
         ordering = ["nome"]
         verbose_name = "escola"
         verbose_name_plural = "escolas"
+
+    def clean(self):
+        super().clean()
+        # O município tem que ser um de Sergipe, e a escola fica na regional que cuida dele.
+        if self.municipio:
+            municipio = Municipio.objects.filter(nome__iexact=self.municipio.strip()).select_related("regional").first()
+            if municipio is None:
+                raise ValidationError({"municipio": "Escolha um município de Sergipe da lista."})
+            self.municipio = municipio.nome  # grafia certa, com acento
+            if self.regional_id and self.regional_id != municipio.regional_id:
+                raise ValidationError({"regional": (
+                    f"{municipio.nome} é da {municipio.regional.nome}, não da {self.regional.nome}."
+                )})
 
     def save(self, *args, **kwargs):
         # Guarda só os números (a tela formata na hora de mostrar).

@@ -101,11 +101,12 @@ class FichaDaEscolaTest(APITestCase):
         self.entrar("escola1")
         self.assertEqual(self.client.get(f"/api/escolas/{self.atheneu.pk}/ficha/").status_code, 200)
 
-    def test_vagas_sao_capacidade_menos_alunos(self):
+    def test_ficha_sem_vagas_e_com_formacao(self):
         self.entrar("dies1")
         ficha = self.client.get(f"/api/escolas/{self.atheneu.pk}/ficha/").data
-        livres = sum(max(t["capacidade"] - t["alunos"], 0) for t in ficha["turmas"])
-        self.assertEqual(ficha["resumo"]["vagas"], livres)
+        self.assertNotIn("vagas", ficha["resumo"])  # mentor pediu pra tirar as vagas
+        carlos = next(p for p in ficha["professores"] if p["nome"] == "Carlos Eduardo Menezes")
+        self.assertEqual(carlos["formacoes"][0]["materias_nomes"], ["Matemática"])
 
 
 class EscolasDaRedeTest(APITestCase):
@@ -121,9 +122,10 @@ class EscolasDaRedeTest(APITestCase):
         self.assertEqual(resposta.status_code, 200)
         return {e["nome"]: e for e in resposta.data}
 
-    def test_todo_mundo_ve_vagas_e_contato(self):
+    def test_todo_mundo_ve_series_e_contato(self):
         atheneu = self.lista("aluno1")["Colégio Estadual Atheneu Sergipense"]
-        self.assertEqual(atheneu["vagas"], sum(v["vagas"] for v in atheneu["vagas_por_serie"]))
+        self.assertNotIn("vagas", atheneu)
+        self.assertIn("1ª série", [s["serie_nome"] for s in atheneu["series"]])
         self.assertIn("Ensino Médio", atheneu["cursos"])
         self.assertIsNotNone(atheneu["latitude"])
         self.assertNotIn("alunos", atheneu)  # quantos alunos e servidores só a gestão vê
@@ -142,3 +144,41 @@ class EscolasDaRedeTest(APITestCase):
         self.assertIn("fora de Sergipe", str(trocada.data))
         certa = self.client.patch(url, {"latitude": -10.91, "longitude": -37.05}, format="json")
         self.assertEqual(certa.status_code, 200, certa.data)
+
+
+class MunicipiosTest(APITestCase):
+    """Os 75 municípios de Sergipe, cada um na sua DRE. A escola herda a regional do município."""
+
+    @classmethod
+    def setUpTestData(cls):
+        call_command("popular_demo", stdout=StringIO())
+
+    def setUp(self):
+        self.client.force_authenticate(Usuario.objects.get(username="dies1"))
+
+    def test_lista_por_regional(self):
+        from .models import Municipio, Regional
+        self.assertEqual(Municipio.objects.count(), 75)
+        self.assertEqual(Regional.objects.get(nome="DRE 03").sede, "Itabaiana")
+        dre3 = Regional.objects.get(nome="DRE 03")
+        nomes = [m["nome"] for m in self.client.get(f"/api/municipios/?regional={dre3.pk}").data]
+        self.assertIn("Itabaiana", nomes)
+        self.assertNotIn("Aracaju", nomes)
+
+    def test_escola_herda_a_regional_do_municipio(self):
+        atheneu = Escola.objects.get(codigo_inep="28012345")
+        resposta = self.client.patch(f"/api/escolas/{atheneu.pk}/", {"municipio": "aquidabã"}, format="json")
+        self.assertEqual(resposta.status_code, 200, resposta.data)
+        self.assertEqual(resposta.data["municipio"], "Aquidabã")
+        self.assertEqual(resposta.data["regional_nome"], "DRE 05")
+        resposta = self.client.patch(f"/api/escolas/{atheneu.pk}/", {"municipio": "Gotham"}, format="json")
+        self.assertEqual(resposta.status_code, 400)
+        self.assertIn("município de Sergipe", str(resposta.data["municipio"]))
+
+    def test_municipio_muda_de_dre_e_as_escolas_vao_junto(self):
+        from .models import Municipio, Regional
+        itabaiana = Municipio.objects.get(nome="Itabaiana")
+        dre5 = Regional.objects.get(nome="DRE 05")
+        resposta = self.client.patch(f"/api/municipios/{itabaiana.pk}/", {"regional": dre5.pk}, format="json")
+        self.assertEqual(resposta.status_code, 200, resposta.data)
+        self.assertEqual(Escola.objects.get(codigo_inep="28034567").regional, dre5)  # Murilo Braga

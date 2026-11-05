@@ -27,16 +27,18 @@ from auditoria.views import RegistroViewSet
 from calendario.views import CalendarioLetivoViewSet, EventoViewSet
 from contas.views import EuView, LoginView
 from documentos.views import DocumentoViewSet
+from inscricoes.views import InscricaoViewSet
 from rede.views import (
     CursoViewSet,
     EscolaViewSet,
     MateriaViewSet,
+    MunicipioViewSet,
     RegionalViewSet,
     SerieViewSet,
     TurmaViewSet,
 )
 from regulacao.views import AtoAutorizativoViewSet, MatrizViewSet, OfertaViewSet
-from rh.views import AfastamentoViewSet, AlocacaoViewSet, LotacaoViewSet, ProfessorViewSet
+from rh.views import AfastamentoViewSet, AlocacaoViewSet, FormacaoViewSet, LotacaoViewSet, ProfessorViewSet
 from solicitacoes.views import SolicitacaoViewSet
 
 from .views import inicio, opcoes
@@ -50,6 +52,7 @@ admin.site.index_title = "Painel de cadastros"
 router = DefaultRouter()
 # DIES
 router.register("regionais", RegionalViewSet)
+router.register("municipios", MunicipioViewSet)
 router.register("escolas", EscolaViewSet)
 router.register("cursos", CursoViewSet)
 router.register("series", SerieViewSet)
@@ -57,12 +60,13 @@ router.register("materias", MateriaViewSet)
 router.register("turmas", TurmaViewSet)
 router.register("calendarios", CalendarioLetivoViewSet)
 router.register("eventos", EventoViewSet)
+router.register("atos", AtoAutorizativoViewSet)  # atos autorizativos: DIES (pedido do mentor em 29/10)
 # DED
-router.register("atos", AtoAutorizativoViewSet)
 router.register("ofertas", OfertaViewSet)
 router.register("matrizes", MatrizViewSet)
 # RH
 router.register("professores", ProfessorViewSet)
+router.register("formacoes", FormacaoViewSet)
 router.register("alocacoes", AlocacaoViewSet, basename="alocacao")
 router.register("lotacoes", LotacaoViewSet, basename="lotacao")
 router.register("afastamentos", AfastamentoViewSet)
@@ -83,6 +87,8 @@ router.register("registros", RegistroViewSet, basename="registro")
 # Pedidos escola → DIES (com conversa)
 router.register("solicitacoes", SolicitacaoViewSet, basename="solicitacao")
 router.register("documentos", DocumentoViewSet, basename="documento")
+# Matrícula pela internet (sem login) e a análise do DIES
+router.register("inscricoes", InscricaoViewSet, basename="inscricao")
 
 urlpatterns = [
     path("", inicio),

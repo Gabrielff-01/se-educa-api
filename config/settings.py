@@ -68,6 +68,7 @@ INSTALLED_APPS = [
     "auditoria",
     "solicitacoes",
     "documentos",
+    "inscricoes",
 ]
 
 MIDDLEWARE = [
@@ -166,6 +167,8 @@ REST_FRAMEWORK = {
     # Por padrão, tudo exige login. Cada tela da API diz quem pode mudar o quê.
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
     "EXCEPTION_HANDLER": "config.api.tratar_erros",
+    # Limite de pedidos de matrícula pela internet (sem login) por endereço de internet.
+    "DEFAULT_THROTTLE_RATES": {"inscricao": "20/hour"},
 }
 
 # Token JWT ("crachá"): o de acesso vale 8 horas, um turno de trabalho.

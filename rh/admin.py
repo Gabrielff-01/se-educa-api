@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.utils import timezone
 
-from .models import Afastamento, Alocacao, Lotacao, Professor
+from .models import Afastamento, Alocacao, Formacao, Lotacao, Professor
 
 
 class LotacaoInline(admin.TabularInline):
@@ -23,6 +23,13 @@ class LotacaoInline(admin.TabularInline):
         return False
 
 
+class FormacaoInline(admin.StackedInline):
+    model = Formacao
+    fields = ("nivel", "curso", "instituicao", "ano_conclusao", "materias")
+    filter_horizontal = ("materias",)
+    extra = 0
+
+
 class AlocacaoInline(admin.TabularInline):
     model = Alocacao
     fields = ("escola", "horas_semanais", "funcao", "portaria", "desde")
@@ -39,7 +46,7 @@ class ProfessorAdmin(admin.ModelAdmin):
     list_filter = ("vinculo", "carga_horaria_semanal", "ativo")
     search_fields = ("nome", "matricula", "cpf")
     search_help_text = "Busque por nome, matrícula ou CPF (só os números)."
-    inlines = [AlocacaoInline, LotacaoInline]
+    inlines = [FormacaoInline, AlocacaoInline, LotacaoInline]
 
     @admin.display(description="CPF", ordering="cpf")
     def cpf_formatado(self, obj):

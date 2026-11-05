@@ -42,6 +42,10 @@ o diário de aulas até hoje com chamada, notas das unidades que já passaram, t
 comunicados, merenda e uma professora afastada (pra aparecer nas carências do RH).
 Pode rodar de novo sem duplicar nada. Nomes, escolas, códigos INEP, CPFs e NIS são fictícios.
 
+Também cria 2 matrículas pela internet esperando o DIES (Lucas Andrade Menezes e Júlia Santos
+Oliveira). Para ver a mensagem de "em análise" no login, entre com `lucas.andrade@exemplo.com`
+e a senha `matricula123`.
+
 A aluna `aluno1` é a Ana Beatriz (1ª série A do Atheneu) e a `responsavel1` é a mãe dela,
 que também tem o Pedro (6º ano no Gonçalo Rollemberg). O `professor1` dá Matemática.
 
@@ -50,15 +54,16 @@ que também tem o Pedro (6º ano no Gonçalo Rollemberg). O `professor1` dá Mat
 ```
 config/      configurações, endereços (urls.py) e peças comuns da API (api.py)
 contas/      usuário (perfil, setor, escola), login JWT e permissões
-rede/        DIES: regionais, escolas, cursos, séries, matérias e turmas
-regulacao/   DED: atos autorizativos, ofertas de séries e matrizes curriculares
+rede/        DIES: regionais, municípios, escolas, cursos, séries, matérias e turmas
+regulacao/   DIES: atos autorizativos. DED: ofertas de séries e matrizes curriculares
 calendario/  DIES: calendário letivo, eventos e feriados de Sergipe
-rh/          RH: professores, lotações e afastamentos (licenças, férias...)
+rh/          RH: professores, formação, alocações, lotações e afastamentos (licenças, férias...)
 academico/   alunos, responsáveis, matrículas, diário (aulas e chamada), notas, fechamento
              das unidades, tarefas, planos de aula, comunicados, grade de horários e merenda
 auditoria/   histórico de alterações: quem criou, editou ou apagou o quê, e o antes/depois
 solicitacoes/ pedidos da escola para a DIES (turma nova, capacidade, outros) com conversa
 documentos/   documentos que aluno/responsável mandam à escola (atestado, matrícula...); a escola aceita ou recusa
+inscricoes/   matrícula pela internet: a família pede a vaga sem login e o DIES aprova ou recusa
 ```
 
 ## Endereços da API
@@ -71,12 +76,14 @@ Todos pedem login (cabeçalho `Authorization: Bearer <token>`), menos o login e 
 | `POST /api/auth/refresh/` | `{"refresh"}` → novo token de acesso |
 | `GET /api/auth/eu/` | quem está logado |
 | `GET /api/opcoes/` | listas de escolha (turnos, tipos de ato, cargas...) |
-| `/api/regionais/` `/api/escolas/` `/api/cursos/` `/api/series/` `/api/materias/` `/api/turmas/` | DIES |
-| `GET /api/escolas/rede/` | tela "Escolas da rede" (lista e mapa): contato, localização, cursos e vagas por série e turno para todos; alunos, turmas e servidores só para a gestão |
+| `/api/regionais/` `/api/municipios/` `/api/escolas/` `/api/cursos/` `/api/series/` `/api/materias/` `/api/turmas/` | DIES. A regional da escola vem do município (os 75 de Sergipe já vêm cadastrados, cada um na sua DRE) |
+| `GET /api/escolas/rede/` | tela "Escolas da rede" (lista e mapa): contato, localização, cursos e as séries com os turnos para todos; alunos, turmas e servidores só para a gestão |
 | `GET /api/escolas/<id>/ficha/?ano=2026` | ficha da escola (como no site da SEDUC): dados, turmas, equipe diretiva, professores e resoluções. Secretaria vê todas; a escola, só a dela |
 | `/api/calendarios/` `/api/eventos/` | DIES (`POST /api/calendarios/<id>/adicionar_feriados/`) |
-| `/api/atos/` `/api/ofertas/` `/api/matrizes/` | DED |
-| `/api/professores/` `/api/afastamentos/` | RH (só a Secretaria vê). `POST /api/professores/<id>/criar_acesso/` cria o login |
+| `/api/atos/` | DIES (atos autorizativos) |
+| `/api/ofertas/` `/api/matrizes/` | DED. A matriz vale para a rede (`escola` vazio) ou só para uma escola (`escola`: id) |
+| `/api/professores/` `/api/afastamentos/` | RH (só a Secretaria vê). Data de admissão obrigatória. `POST /api/professores/<id>/criar_acesso/` cria o login |
+| `/api/formacoes/` | RH: formação do professor (licenciatura, complementação pedagógica ou pós) e as matérias que ela habilita |
 | `/api/alocacoes/` | RH aloca o professor numa escola (horas e portaria). A escola lê as dela e define a função com `POST /api/alocacoes/<id>/funcao/` (`professor`, `diretor`, `coordenador`, `secretario`) |
 | `/api/lotacoes/` | turmas e matérias de cada professor: quem cadastra é a escola (só professor alocado nela, com função Professor, até 2/3 das horas que ele tem ali) |
 | `GET /api/rh/painel/` `GET /api/rh/carencias/` | resumo do RH e aulas sem professor / para substituir |
@@ -95,12 +102,15 @@ Todos pedem login (cabeçalho `Authorization: Bearer <token>`), menos o login e 
 | `GET /api/registros/` | histórico de alterações (a Secretaria vê tudo; os outros, só o que eles fizeram) |
 | `/api/solicitacoes/` | pedidos escola → DIES. A escola abre e conversa (`mensagens`); a DIES responde, `atender` (cria a turma ou muda a capacidade) ou `recusar` |
 | `GET /api/documentos/na-chamada/?turma=<id>&data=AAAA-MM-DD` | alunos da turma com atestado ou justificativa ACEITOS que cobrem o dia (amarelo na chamada) |
+| `GET /api/inscricoes/escolas/` | **sem login.** Escolas com as séries abertas no ano e os turnos de cada série (pro formulário da matrícula) |
+| `POST /api/inscricoes/` | **sem login.** A família manda o pedido de matrícula (dados do aluno e do responsável, endereço, escola, série, e-mail e senha). Devolve o protocolo. Limite de 20 envios por hora por IP |
+| `/api/inscricoes/` | só o DIES lista e vê (`?status=aguardando`). `aprovar` cria aluno, responsável, login do aluno e a matrícula em análise sem turma (cai na Enturmação); `recusar` pede o motivo |
 | `/api/documentos/` | documentos enviados à escola. Aluno/responsável enviam com arquivo (PDF/JPG/PNG até 5 MB, `multipart/form-data`) e cancelam enquanto aguarda; a escola abre (`arquivo`), `aceitar` ou `recusar` (com motivo). O arquivo fica guardado no banco |
 
 Filtros pela URL, por exemplo: `/api/turmas/?escola=1&ano_letivo=2026`.
 
 **Quem pode o quê:** todo mundo logado lê os cadastros da rede; só o setor responsável cria,
-edita e apaga (DIES, DED ou RH). O RH aloca o professor na escola; a escola escolhe a função,
+edita e apaga (DIES, DED ou RH; os atos autorizativos são do DIES). O RH aloca o professor na escola; a escola escolhe a função,
 as turmas e o horário dele.
 A escola cuida só dos alunos, matrículas, horários e merenda dela. O professor só lança
 aula, chamada, nota, tarefa e plano nas turmas e matérias da sua lotação. O aluno vê só
@@ -112,11 +122,20 @@ As regras ficam nos models (`clean()`), então valem igual no admin e na API:
 
 - **Oferta:** turma só de série que a escola oferece naquele ano.
 - **Matriz:** as aulas por semana têm que fechar a carga mínima do curso (800 h no Fundamental,
-  1.000 h no Médio). Hora-aula de 50 min não é hora de relógio.
+  1.000 h no Médio). Hora-aula de 50 min não é hora de relógio. Uma escola pode ter matriz própria
+  (só se oferecer a série); ela usa a dela e as outras usam a da rede.
+- **Escola:** o município tem que ser um dos 75 de Sergipe; a DRE sai dele.
 - **Calendário:** conta os dias letivos e avisa se ficar abaixo de 200 (LDB, art. 24).
   Feriados nacionais e de Sergipe entram com um clique.
-- **Lotação:** a matéria tem que estar na matriz, não pode passar das aulas da matriz e o
+- **Lotação:** a matéria tem que estar na matriz (a da escola ou a da rede), o professor tem que ter
+  formação que o habilite nela (licenciatura ou complementação; pós não habilita, LDB art. 62),
+  não pode passar das aulas da matriz e o
   professor não passa de 2/3 da carga em sala (Lei 11.738/2008): 40 h → 26 aulas, 20 h → 13.
+- **Matrícula pela internet:** CPFs válidos; NIS obrigatório para Bolsa Família; só uma
+  inscrição esperando por CPF e por e-mail; o e-mail não pode já ser login de alguém; a escola
+  tem que oferecer a série no ano; o mesmo aluno (CPF) não tem duas matrículas aprovadas no ano. A senha é guardada criptografada e vira a senha do login do aluno
+  quando o DIES aprova. Antes disso, quem entra com o e-mail e a senha vê o andamento (em análise,
+  ou recusada com o motivo).
 - **Matrícula:** só em série que a escola oferece; uma matrícula ativa por aluno no ano;
   a turma tem que ser da mesma escola, série e ano, e não pode passar da capacidade.
   Bolsa Família e Pé-de-Meia exigem o NIS (11 dígitos).

@@ -19,7 +19,7 @@ class ProfessorAPITest(APITestCase):
 
     def test_cadastra_com_cpf_formatado(self):
         dados = {"nome": "Teste da Silva", "matricula": "200001-5", "cpf": "529.982.247-25",
-                 "carga_horaria_semanal": 20, "vinculo": "temporario"}
+                 "carga_horaria_semanal": 20, "vinculo": "temporario", "data_admissao": "2026-02-02"}
         resposta = self.client.post("/api/professores/", dados, format="json")
         self.assertEqual(resposta.status_code, 201, resposta.data)
         self.assertEqual(resposta.data["cpf_formatado"], "529.982.247-25")
@@ -27,17 +27,25 @@ class ProfessorAPITest(APITestCase):
         self.assertEqual(Professor.objects.get(matricula="200001-5").cpf, "52998224725")
 
     def test_cpf_invalido(self):
-        dados = {"nome": "Teste", "matricula": "200002", "cpf": "111.111.111-11"}
+        dados = {"nome": "Teste", "matricula": "200002", "cpf": "111.111.111-11", "data_admissao": "2026-02-02"}
         resposta = self.client.post("/api/professores/", dados, format="json")
         self.assertEqual(resposta.status_code, 400)
         self.assertIn("cpf", resposta.data)
 
     def test_cpf_repetido_com_pontos(self):
         existente = Professor.objects.first()
-        dados = {"nome": "Teste", "matricula": "200003", "cpf": existente.cpf_formatado}
+        dados = {"nome": "Teste", "matricula": "200003", "cpf": existente.cpf_formatado, "data_admissao": "2026-02-02"}
         resposta = self.client.post("/api/professores/", dados, format="json")
         self.assertEqual(resposta.status_code, 400)
         self.assertIn("Já existe um professor com esse CPF.", str(resposta.data))
+
+    def test_data_de_admissao_obrigatoria(self):
+        dados = {"nome": "Sem Data", "matricula": "200004", "cpf": "529.982.247-25"}
+        resposta = self.client.post("/api/professores/", dados, format="json")
+        self.assertEqual(resposta.status_code, 400)
+        self.assertEqual(resposta.data["data_admissao"][0], "Informe a data de admissão.")
+        resposta = self.client.post("/api/professores/", {**dados, "data_admissao": "2099-01-01"}, format="json")
+        self.assertIn("futuro", str(resposta.data["data_admissao"]))
 
     def test_nao_reduz_carga_com_alocacao(self):
         carlos = Professor.objects.get(matricula="100001-1")  # 40 h no Atheneu
@@ -131,17 +139,17 @@ class LotacaoTest(Base):
         paulo = self.professor("100005-5")
         turma = self.turma(self.murilo, 3, 1)
         self.entrar("escola3")
-        resposta = self.lotar(paulo, turma, "Física", 2)
+        resposta = self.lotar(paulo, turma, "Arte", 2)  # Paulo é licenciado em Artes Visuais
         self.assertEqual(resposta.status_code, 400)
         self.assertIn("Peça ao RH para alocar", resposta.data["professor"][0])
         Alocacao.objects.create(professor=paulo, escola=self.murilo, horas_semanais=40)
-        resposta = self.lotar(paulo, turma, "Física", 2)
+        resposta = self.lotar(paulo, turma, "Arte", 2)
         self.assertEqual(resposta.status_code, 201, resposta.data)
 
     def test_escola_nao_lota_em_turma_de_outra_escola(self):
         Alocacao.objects.create(professor=self.professor("100005-5"), escola=self.murilo, horas_semanais=40)
         self.entrar("escola1")
-        resposta = self.lotar(self.professor("100005-5"), self.turma(self.murilo, 3, 1), "Física", 2)
+        resposta = self.lotar(self.professor("100005-5"), self.turma(self.murilo, 3, 1), "Arte", 2)
         self.assertEqual(resposta.status_code, 403)
 
     def test_diretor_nao_recebe_turma(self):
@@ -153,14 +161,57 @@ class LotacaoTest(Base):
     def test_lotacao_passa_dos_dois_tercos(self):
         jose = self.professor("100003-3")  # 20 h no Atheneu: limite 13 aulas (já tem 6)
         self.entrar("escola1")
-        for serie, materia in [(3, "Física"), (3, "Química"), (3, "Biologia"), (2, "Biologia")]:
-            resposta = self.lotar(jose, self.turma(self.atheneu, 3, serie), materia, 2)
+        for serie, letra, materia in [(3, "A", "Física"), (3, "A", "Química"), (2, "A", "Química"), (1, "B", "Física")]:
+            resposta = self.lotar(jose, self.turma(self.atheneu, 3, serie, letra), materia, 2)
         self.assertEqual(resposta.status_code, 400)
         self.assertIn("2/3 da carga", resposta.data["aulas_semanais"][0])
         self.assertIn("Com 20 horas aqui, o limite é 13", resposta.data["aulas_semanais"][0])
 
     def test_lotacao_alem_da_matriz(self):
         self.entrar("escola1")
-        resposta = self.lotar(self.professor("100001-1"), self.turma(self.atheneu, 3, 1, "B"), "Física", 3)
+        resposta = self.lotar(self.professor("100003-3"), self.turma(self.atheneu, 3, 1, "B"), "Física", 3)
         self.assertEqual(resposta.status_code, 400)
         self.assertIn("Disponíveis: 2", resposta.data["aulas_semanais"][0])
+
+    def test_so_lota_na_materia_que_a_formacao_habilita(self):
+        self.entrar("escola1")
+        carlos = self.professor("100001-1")  # Licenciatura em Matemática
+        resposta = self.lotar(carlos, self.turma(self.atheneu, 3, 1, "B"), "Física", 2)
+        self.assertEqual(resposta.status_code, 400)
+        self.assertIn("não tem formação que o habilite a lecionar Física", resposta.data["materia"][0])
+
+
+class FormacaoTest(Base):
+    """O RH cadastra a formação e as matérias que ela habilita."""
+
+    def test_pos_graduacao_nao_habilita(self):
+        self.entrar("rh1")
+        dados = {"professor": self.professor("100005-5").pk, "nivel": "pos", "curso": "Mestrado em Educação",
+                 "materias": [Materia.objects.get(nome="Física").pk]}
+        resposta = self.client.post("/api/formacoes/", dados, format="json")
+        self.assertEqual(resposta.status_code, 400)
+        self.assertIn("LDB", resposta.data["materias"][0])
+        resposta = self.client.post("/api/formacoes/", {**dados, "materias": []}, format="json")
+        self.assertEqual(resposta.status_code, 201, resposta.data)
+
+    def test_licenciatura_habilita_e_aparece_no_professor(self):
+        self.entrar("rh1")
+        paulo = self.professor("100005-5")
+        dados = {"professor": paulo.pk, "nivel": "licenciatura", "curso": "Licenciatura em Física",
+                 "instituicao": "UFS", "ano_conclusao": 2020, "materias": [Materia.objects.get(nome="Física").pk]}
+        self.assertEqual(self.client.post("/api/formacoes/", dados, format="json").status_code, 201)
+        professor = self.client.get(f"/api/professores/{paulo.pk}/").data
+        self.assertEqual(professor["habilitado_em"], ["Arte", "Física"])
+
+    def test_nao_tira_habilitacao_de_materia_que_ele_da(self):
+        self.entrar("rh1")
+        formacao = self.professor("100001-1").formacoes.get()  # Carlos dá Matemática no Atheneu
+        resposta = self.client.delete(f"/api/formacoes/{formacao.pk}/")
+        self.assertEqual(resposta.status_code, 400)
+        self.assertIn("Peça à escola para tirar essa turma", str(resposta.data))
+
+    def test_escola_nao_mexe_na_formacao(self):
+        self.entrar("escola1")
+        dados = {"professor": self.professor("100001-1").pk, "nivel": "licenciatura", "curso": "X",
+                 "materias": [Materia.objects.get(nome="Física").pk]}
+        self.assertEqual(self.client.post("/api/formacoes/", dados, format="json").status_code, 403)
