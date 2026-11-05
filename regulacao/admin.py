@@ -117,17 +117,17 @@ class ItemMatrizInline(admin.TabularInline):
 
 @admin.register(Matriz)
 class MatrizAdmin(admin.ModelAdmin):
-    list_display = ("serie", "jornada", "ano_letivo", "total_aulas", "carga_anual", "cumpre_minimo")
-    list_filter = ("ano_letivo", "jornada", "serie__curso")
-    autocomplete_fields = ("serie",)
+    list_display = ("serie", "jornada", "ano_letivo", "escola", "total_aulas", "carga_anual", "cumpre_minimo")
+    list_filter = ("ano_letivo", "jornada", "serie__curso", "escola")
+    autocomplete_fields = ("serie", "escola")
     inlines = [ItemMatrizInline]
 
     def get_queryset(self, request):
         return super().get_queryset(request).select_related("serie__curso").prefetch_related("itens")
 
     def get_readonly_fields(self, request, obj=None):
-        if obj:  # editando: série, ano e jornada travados, porque as lotações dependem deles
-            return ("serie", "ano_letivo", "jornada")
+        if obj:  # editando: série, ano, jornada e escola travados, porque as lotações dependem deles
+            return ("serie", "ano_letivo", "jornada", "escola")
         return ()
 
     @admin.display(description="aulas por semana")

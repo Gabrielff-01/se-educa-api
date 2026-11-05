@@ -8,7 +8,7 @@ from calendario.models import DIAS_LETIVOS_MINIMOS, Evento
 from contas.models import Usuario
 from regulacao.models import AtoAutorizativo, Matriz
 from rede.models import Escola, Materia, Turma
-from rh.models import Afastamento, Alocacao, Professor
+from rh.models import Afastamento, Alocacao, Formacao, Professor
 
 
 def inicio(request):
@@ -41,6 +41,7 @@ def opcoes(request):
         "cargas": lista(Professor.Carga.choices),
         "vinculos": lista(Professor.Vinculo.choices),
         "funcoes": lista(Alocacao.Funcao.choices),
+        "niveis_formacao": lista(Formacao.Nivel.choices),
         "tipos_afastamento": lista(Afastamento.Tipo.choices),
         "programas": lista(Aluno.Programa.choices[1:]),  # sem o "Nenhum"
         "parentescos": lista(Vinculo.Parentesco.choices),

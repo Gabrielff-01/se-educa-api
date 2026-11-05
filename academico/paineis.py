@@ -20,6 +20,7 @@ from contas.permissoes import eh_do_setor
 from documentos.models import Documento
 from rede.models import Escola, Regional, Turma
 from rh.models import Afastamento, Alocacao, Lotacao, Professor, matriz_da_turma
+from rh.serializers import resumo_formacao
 from solicitacoes.models import Mensagem
 
 from .acesso import aluno_pedido, alunos_visiveis, eh_secretaria, pode_cuidar_da_escola, professor_de
@@ -430,7 +431,8 @@ def professores_da_escola(request):
     """
     escola = escola_pedida(request)
     ano = ano_pedido(request)
-    alocacoes = Alocacao.objects.filter(escola=escola).select_related("professor").order_by("professor__nome")
+    alocacoes = Alocacao.objects.filter(escola=escola).select_related("professor").prefetch_related(
+        "professor__formacoes__materias").order_by("professor__nome")
     lotacoes = Lotacao.objects.filter(turma__escola=escola, turma__ano_letivo=ano).select_related(
         "materia", "turma__serie").annotate(no_quadro=Count("horarios")).order_by(
         "turma__serie__ordem", "turma__letra", "materia__nome")
@@ -458,6 +460,9 @@ def professores_da_escola(request):
                 for lot in lista
             ],
             "afastamento": {"tipo_nome": afastamento.get_tipo_display(), "fim": afastamento.fim} if afastamento else None,
+            # Formação (RH) e as matérias que ela habilita: a escola só lota nessas.
+            "formacoes": [resumo_formacao(f) for f in professor.formacoes.all()],
+            "habilitado_em": sorted({m.id for f in professor.formacoes.all() if f.habilita for m in f.materias.all()}),
         })
     return Response(resposta)
 

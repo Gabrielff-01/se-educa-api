@@ -2,13 +2,21 @@ from rest_framework import serializers
 
 from config.api import ModelSerializerComRegras
 
-from .models import Curso, Escola, Materia, Regional, Serie, Turma
+from .models import Curso, Escola, Materia, Municipio, Regional, Serie, Turma
 
 
 class RegionalSerializer(ModelSerializerComRegras):
     class Meta:
         model = Regional
-        fields = ["id", "nome"]
+        fields = ["id", "nome", "sede"]
+
+
+class MunicipioSerializer(ModelSerializerComRegras):
+    regional_nome = serializers.CharField(source="regional.nome", read_only=True)
+
+    class Meta:
+        model = Municipio
+        fields = ["id", "nome", "regional", "regional_nome"]
 
 
 class EscolaSerializer(ModelSerializerComRegras):
@@ -36,7 +44,17 @@ class EscolaSerializer(ModelSerializerComRegras):
                 "min_value": "Longitude fora de Sergipe (vai de -38,3 a -36,3). Confira se não trocou com a latitude.",
                 "max_value": "Longitude fora de Sergipe (vai de -38,3 a -36,3). Confira se não trocou com a latitude.",
             }},
+            # A regional vem do município (cada município de Sergipe é de uma DRE só).
+            "regional": {"required": False},
         }
+
+    def validate(self, attrs):
+        nome = attrs.get("municipio")
+        if nome is not None:
+            municipio = Municipio.objects.filter(nome__iexact=nome.strip()).first()
+            if municipio:
+                attrs["regional"] = municipio.regional
+        return super().validate(attrs)
 
 
 class SerieSerializer(ModelSerializerComRegras):

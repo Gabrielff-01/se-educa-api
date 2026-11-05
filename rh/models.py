@@ -39,12 +39,16 @@ def jornada_da_turma(turma):
 
 
 def matriz_da_turma(turma):
-    """A matriz que vale para a turma (mesma série, ano e jornada). None se não tiver."""
-    return Matriz.objects.filter(
+    """A matriz que vale para a turma (mesma série, ano e jornada). None se não tiver.
+
+    Se a escola tem matriz própria dessa série, vale a dela; senão, a da rede.
+    """
+    matrizes = Matriz.objects.filter(
         serie_id=turma.serie_id,
         ano_letivo=turma.ano_letivo,
         jornada=jornada_da_turma(turma),
-    ).first()
+    )
+    return matrizes.filter(escola_id=turma.escola_id).first() or matrizes.filter(escola__isnull=True).first()
 
 
 class Professor(models.Model):
@@ -101,7 +105,8 @@ class Professor(models.Model):
         choices=Vinculo.choices,
         default=Vinculo.EFETIVO,
     )
-    data_admissao = models.DateField(verbose_name="data de admissão", null=True, blank=True)
+    # Obrigatória no cadastro (pedido do mentor). O null=True fica só pros cadastros antigos do banco.
+    data_admissao = models.DateField(verbose_name="data de admissão", null=True, blank=False)
     ativo = models.BooleanField(verbose_name="ativo", default=True)
 
     class Meta:
@@ -113,6 +118,8 @@ class Professor(models.Model):
         super().clean()
         if self.cpf:
             self.cpf = so_numeros(self.cpf)  # antes de checar se o CPF já existe
+        if self.data_admissao and self.data_admissao > timezone.localdate():
+            raise ValidationError({"data_admissao": "A data de admissão não pode ser no futuro."})
         if self.pk and self.carga_horaria_semanal:
             self.conferir_reducao_de_carga()
 
@@ -274,6 +281,56 @@ class Alocacao(models.Model):
         return f"{self.professor.nome} - {self.escola} ({self.get_funcao_display()})"
 
 
+class Formacao(models.Model):
+    """Formação do professor (graduação) e as matérias que ela habilita ele a lecionar.
+
+    Pela LDB (art. 62), para dar aula na educação básica o professor precisa de licenciatura
+    (ou de um bacharelado com complementação pedagógica). Ex.: Licenciatura em Matemática
+    habilita para Matemática; Licenciatura em Ciências Biológicas, para Biologia e Ciências.
+    Pós-graduação aparece na ficha, mas não habilita sozinha.
+    """
+
+    class Nivel(models.TextChoices):
+        LICENCIATURA = "licenciatura", "Licenciatura"
+        COMPLEMENTACAO = "complementacao", "Bacharelado com complementação pedagógica"
+        POS = "pos", "Pós-graduação (especialização, mestrado ou doutorado)"
+
+    NIVEIS_QUE_HABILITAM = [Nivel.LICENCIATURA, Nivel.COMPLEMENTACAO]
+
+    professor = models.ForeignKey(Professor, verbose_name="professor", on_delete=models.CASCADE,
+                                  related_name="formacoes")
+    nivel = models.CharField(verbose_name="nível", max_length=15, choices=Nivel.choices,
+                             default=Nivel.LICENCIATURA)
+    curso = models.CharField(verbose_name="curso", max_length=120, help_text="Ex.: Licenciatura em Matemática")
+    instituicao = models.CharField(verbose_name="instituição", max_length=120, blank=True, help_text="Ex.: UFS")
+    ano_conclusao = models.PositiveSmallIntegerField(
+        verbose_name="ano de conclusão", null=True, blank=True,
+        validators=[MinValueValidator(1950), MaxValueValidator(2100)],
+    )
+    materias = models.ManyToManyField(Materia, verbose_name="matérias que habilita", blank=True,
+                                      related_name="formacoes")
+
+    class Meta:
+        ordering = ["professor__nome", "nivel", "curso"]
+        verbose_name = "formação"
+        verbose_name_plural = "formações"
+
+    @property
+    def habilita(self):
+        return self.nivel in self.NIVEIS_QUE_HABILITAM
+
+    def __str__(self):
+        return f"{self.curso} ({self.professor})"
+
+
+def materias_habilitadas(professor):
+    """Ids das matérias que a formação do professor habilita (só licenciatura/complementação)."""
+    return set(
+        Formacao.objects.filter(professor=professor, nivel__in=Formacao.NIVEIS_QUE_HABILITAM)
+        .values_list("materias", flat=True)
+    ) - {None}
+
+
 class Lotacao(models.Model):
     """Atribuição de aulas: qual professor dá qual matéria, em qual turma.
 
@@ -336,6 +393,13 @@ class Lotacao(models.Model):
             raise ValidationError({"professor": (
                 f"{professor.nome} está como {alocacao.get_funcao_display()} nesta escola. "
                 "Mude a função para Professor(a) antes de dar turmas a ele."
+            )})
+
+        # Regra 0b: a formação do professor tem que habilitar a matéria (cadastrada pelo RH).
+        if self.materia_id and self.materia_id not in materias_habilitadas(professor):
+            raise ValidationError({"materia": (
+                f"{professor.nome} não tem formação que o habilite a lecionar {self.materia}. "
+                "O RH cadastra a formação dele (ex.: Licenciatura em ...) e as matérias que ela habilita."
             )})
 
         # Regra 1: a matéria tem que estar na matriz curricular da turma (Aula 3, DED).

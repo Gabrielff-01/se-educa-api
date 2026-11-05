@@ -47,18 +47,26 @@ def conferir_lotacoes(matriz, aulas_por_materia):
         turmas = turmas.filter(turno=Turma.Turno.INTEGRAL)
     else:
         turmas = turmas.exclude(turno=Turma.Turno.INTEGRAL)
+    if matriz.escola_id:
+        turmas = turmas.filter(escola_id=matriz.escola_id)  # matriz só dessa escola
+    else:
+        # Matriz da rede: não vale para as escolas que têm matriz própria dessa série.
+        proprias = Matriz.objects.filter(
+            serie_id=matriz.serie_id, ano_letivo=matriz.ano_letivo, jornada=matriz.jornada, escola__isnull=False,
+        ).values("escola_id")
+        turmas = turmas.exclude(escola_id__in=proprias)
     lotadas = (
         turmas.filter(lotacoes__isnull=False)
-        .values("letra", "lotacoes__materia", "lotacoes__materia__nome")
+        .values("letra", "escola__nome", "lotacoes__materia", "lotacoes__materia__nome")
         .annotate(total=Sum("lotacoes__aulas_semanais"))
     )
     for linha in lotadas:
         permitido = aulas_por_materia.get(linha["lotacoes__materia"], 0)
         if linha["total"] > permitido:
             raise ValidationError(
-                f"A turma {matriz.serie.nome} {linha['letra']} já tem {linha['total']} aulas de "
-                f"{linha['lotacoes__materia__nome']} lotadas com professores, mas a matriz "
-                f"ficaria com {permitido}. Peça às escolas para ajustar as aulas dos professores antes."
+                f"A turma {matriz.serie.nome} {linha['letra']} ({linha['escola__nome']}) já tem {linha['total']} "
+                f"aulas de {linha['lotacoes__materia__nome']} lotadas com professores, mas a matriz "
+                f"ficaria com {permitido}. Peça à escola para ajustar as aulas dos professores antes."
             )
 
 
@@ -154,7 +162,11 @@ class Oferta(models.Model):
 
 
 class Matriz(models.Model):
-    """Matriz curricular: quantas aulas por semana cada matéria tem numa série."""
+    """Matriz curricular: quantas aulas por semana cada matéria tem numa série.
+
+    Sem escola = matriz da rede (vale para todas). Com escola = matriz específica daquela
+    escola (ex.: escola com proposta própria), que vale no lugar da matriz da rede.
+    """
 
     class Jornada(models.TextChoices):
         PARCIAL = "parcial", "Tempo parcial"
@@ -171,6 +183,15 @@ class Matriz(models.Model):
         choices=Jornada.choices,
         default=Jornada.PARCIAL,
         help_text="A rede pode ter uma matriz para o tempo parcial e outra para o tempo integral.",
+    )
+    escola = models.ForeignKey(
+        Escola,
+        verbose_name="escola",
+        on_delete=models.PROTECT,
+        related_name="matrizes",
+        null=True,
+        blank=True,
+        help_text="Deixe vazio para a matriz da rede. Escolha a escola só se ela tiver uma matriz diferente.",
     )
     duracao_aula_minutos = models.PositiveSmallIntegerField(
         verbose_name="duração da aula (minutos)",
@@ -191,13 +212,35 @@ class Matriz(models.Model):
         ordering = ["-ano_letivo", "serie__curso__ordem", "serie__ordem", "jornada"]
         verbose_name = "matriz curricular"
         verbose_name_plural = "matrizes curriculares"
+        # Duas regras porque no banco "vazio" (NULL) nunca é igual a outro vazio:
+        # uma matriz da rede por série/ano/jornada, e uma por escola.
         constraints = [
             models.UniqueConstraint(
                 fields=["serie", "ano_letivo", "jornada"],
-                name="matriz_unica_por_serie_ano_jornada",
-                violation_error_message="Essa série já tem uma matriz dessa jornada nesse ano letivo.",
+                condition=models.Q(escola__isnull=True),
+                name="matriz_da_rede_unica",
+                violation_error_message="A rede já tem uma matriz dessa série e jornada nesse ano letivo.",
+            ),
+            models.UniqueConstraint(
+                fields=["serie", "ano_letivo", "jornada", "escola"],
+                condition=models.Q(escola__isnull=False),
+                name="matriz_da_escola_unica",
+                violation_error_message="Essa escola já tem uma matriz dessa série e jornada nesse ano letivo.",
             ),
         ]
+
+    def clean(self):
+        super().clean()
+        # Matriz específica só para escola que oferece a série naquele ano (Oferta do DED).
+        if self.escola_id and self.serie_id and self.ano_letivo:
+            oferece = Oferta.objects.filter(
+                escola_id=self.escola_id, ano_letivo=self.ano_letivo, series=self.serie_id
+            ).exists()
+            if not oferece:
+                raise ValidationError({"escola": (
+                    f"{self.escola.nome} não oferece {self.serie} em {self.ano_letivo}. "
+                    "Cadastre a oferta da escola antes."
+                )})
 
     @property
     def total_aulas_semanais(self):
@@ -213,7 +256,8 @@ class Matriz(models.Model):
         return self.carga_horaria_anual >= self.serie.curso.carga_horaria_minima_anual
 
     def __str__(self):
-        return f"Matriz {self.serie} - {self.get_jornada_display()} ({self.ano_letivo})"
+        onde = self.escola.nome if self.escola_id else "rede"
+        return f"Matriz {self.serie} - {self.get_jornada_display()} ({self.ano_letivo}, {onde})"
 
 
 class ItemMatriz(models.Model):
