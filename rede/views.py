@@ -1,6 +1,6 @@
 from django.db.models import Count, Q
 from django.utils import timezone
-from rest_framework import viewsets
+from rest_framework import serializers, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
@@ -9,11 +9,12 @@ from auditoria.historico import RegistrarAlteracoesMixin
 from config.api import FiltrosMixin
 from contas.permissoes import edicao_do_setor
 
-from .models import Curso, Escola, Materia, Regional, Serie, Turma
+from .models import Curso, Escola, Materia, Municipio, Regional, Serie, Turma
 from .serializers import (
     CursoSerializer,
     EscolaSerializer,
     MateriaSerializer,
+    MunicipioSerializer,
     RegionalSerializer,
     SerieSerializer,
     TurmaSerializer,
@@ -29,6 +30,26 @@ class RegionalViewSet(RegistrarAlteracoesMixin, viewsets.ModelViewSet):
     permission_classes = SO_DIES_EDITA
 
 
+class MunicipioViewSet(RegistrarAlteracoesMixin, FiltrosMixin, viewsets.ModelViewSet):
+    """Os 75 municípios de Sergipe e a DRE de cada um. Filtro: ?regional=ID."""
+
+    queryset = Municipio.objects.select_related("regional")
+    serializer_class = MunicipioSerializer
+    permission_classes = SO_DIES_EDITA
+    filtros = {"regional": "regional_id"}
+
+    def perform_update(self, serializer):
+        super().perform_update(serializer)  # salva e grava no histórico
+        # Município mudou de DRE: as escolas dele vão junto.
+        municipio = serializer.instance
+        Escola.objects.filter(municipio__iexact=municipio.nome).update(regional=municipio.regional)
+
+    def perform_destroy(self, municipio):
+        if Escola.objects.filter(municipio__iexact=municipio.nome).exists():
+            raise serializers.ValidationError({"detail": f"{municipio.nome} tem escolas cadastradas. Não dá pra apagar."})
+        super().perform_destroy(municipio)
+
+
 class EscolaViewSet(RegistrarAlteracoesMixin, FiltrosMixin, viewsets.ModelViewSet):
     queryset = Escola.objects.select_related("regional")
     serializer_class = EscolaSerializer
@@ -39,8 +60,8 @@ class EscolaViewSet(RegistrarAlteracoesMixin, FiltrosMixin, viewsets.ModelViewSe
     def rede(self, request):
         """GET /api/escolas/rede/ (?ano=2026): as escolas para a tela "Escolas da rede" (lista e mapa).
 
-        Para todo mundo logado: endereço, contato, cursos oferecidos (DED), turnos e vagas
-        por série e turno (vaga = capacidade da turma - alunos confirmados).
+        Para todo mundo logado: endereço, contato, cursos oferecidos (DED) e as séries com os turnos
+        de cada uma. Vagas não aparecem (pedido do mentor em 29/10).
         Só a gestão (Secretaria e escolas) recebe também alunos, turmas e servidores.
         """
         from academico.acesso import Perfil, eh_secretaria  # import aqui dentro: academico depende de rede
@@ -66,11 +87,12 @@ class EscolaViewSet(RegistrarAlteracoesMixin, FiltrosMixin, viewsets.ModelViewSe
             "ofertas__series__curso")
         for escola in escolas.order_by("nome"):
             lista = por_escola.get(escola.id, [])
-            # Vagas somadas por série + turno (duas turmas de 1ª série de manhã viram uma linha só).
-            vagas = {}
+            # Séries com turma neste ano e os turnos de cada uma (ex.: 1ª série: Matutino, Vespertino).
+            series = {}
             for turma in lista:
-                chave = (turma.serie.curso.nome, turma.serie.nome, turma.get_turno_display())
-                vagas[chave] = vagas.get(chave, 0) + max(turma.capacidade - turma.alunos, 0)
+                turnos = series.setdefault((turma.serie.curso.nome, turma.serie.nome), [])
+                if turma.get_turno_display() not in turnos:
+                    turnos.append(turma.get_turno_display())
             cursos = sorted({serie.curso.nome for oferta in escola.ofertas.all() if oferta.ano_letivo == ano
                              for serie in oferta.series.all()})
             item = {
@@ -82,10 +104,9 @@ class EscolaViewSet(RegistrarAlteracoesMixin, FiltrosMixin, viewsets.ModelViewSe
                 "latitude": escola.latitude, "longitude": escola.longitude,
                 "cursos": cursos,
                 "turnos": sorted({turma.get_turno_display() for turma in lista}),
-                "vagas": sum(vagas.values()),
-                "vagas_por_serie": [
-                    {"curso_nome": curso, "serie_nome": serie, "turno_nome": turno, "vagas": total}
-                    for (curso, serie, turno), total in vagas.items()
+                "series": [
+                    {"curso_nome": curso, "serie_nome": serie, "turnos": turnos}
+                    for (curso, serie), turnos in series.items()
                 ],
             }
             if gestao:
@@ -129,7 +150,7 @@ class EscolaViewSet(RegistrarAlteracoesMixin, FiltrosMixin, viewsets.ModelViewSe
             for turma in turmas
         ]
 
-        alocacoes = list(escola.alocacoes.select_related("professor"))
+        alocacoes = list(escola.alocacoes.select_related("professor").prefetch_related("professor__formacoes__materias"))
         ordem = {funcao: i for i, funcao in enumerate(Alocacao.FUNCOES_DIRETIVAS)}
         equipe = sorted(
             (a for a in alocacoes if a.funcao in ordem), key=lambda a: (ordem[a.funcao], a.professor.nome)
@@ -146,7 +167,6 @@ class EscolaViewSet(RegistrarAlteracoesMixin, FiltrosMixin, viewsets.ModelViewSe
             "resumo": {
                 "turmas": len(lista_turmas),
                 "alunos": sum(t["alunos"] for t in lista_turmas),
-                "vagas": sum(max(t["capacidade"] - t["alunos"], 0) for t in lista_turmas),
                 "servidores": len(alocacoes),
             },
             "turmas": lista_turmas,
@@ -158,6 +178,12 @@ class EscolaViewSet(RegistrarAlteracoesMixin, FiltrosMixin, viewsets.ModelViewSe
                 {
                     "nome": a.professor.nome, "vinculo_nome": a.professor.get_vinculo_display(),
                     "horas": a.horas_semanais, "aulas": a.aulas_no_ano(ano),
+                    # "Licenciatura em Matemática (UFS)" -> habilitado em Matemática
+                    "formacoes": [
+                        {"curso": f.curso, "instituicao": f.instituicao, "nivel_nome": f.get_nivel_display(),
+                         "habilita": f.habilita, "materias_nomes": [m.nome for m in f.materias.all()]}
+                        for f in a.professor.formacoes.all()
+                    ],
                     "afastado": a.professor.afastamentos.filter(inicio__lte=hoje, fim__gte=hoje).exists(),
                 }
                 for a in professores

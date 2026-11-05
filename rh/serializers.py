@@ -3,7 +3,70 @@ from rest_framework import serializers
 
 from config.api import ModelSerializerComRegras
 
-from .models import Afastamento, Alocacao, Lotacao, Professor
+from .models import Afastamento, Alocacao, Formacao, Lotacao, Professor
+
+
+def resumo_formacao(formacao):
+    """Formação em poucas palavras, para listas e fichas."""
+    return {
+        "id": formacao.id, "nivel": formacao.nivel, "nivel_nome": formacao.get_nivel_display(),
+        "curso": formacao.curso, "instituicao": formacao.instituicao, "ano_conclusao": formacao.ano_conclusao,
+        "habilita": formacao.habilita,
+        "materias": [m.id for m in formacao.materias.all()],
+        "materias_nomes": [m.nome for m in formacao.materias.all()],
+    }
+
+
+class FormacaoSerializer(ModelSerializerComRegras):
+    """Formação do professor. {"professor", "nivel", "curso", "instituicao", "ano_conclusao", "materias": [ids]}"""
+
+    nivel_nome = serializers.CharField(source="get_nivel_display", read_only=True)
+    professor_nome = serializers.CharField(source="professor.nome", read_only=True)
+    materias_nomes = serializers.SerializerMethodField()
+    habilita = serializers.BooleanField(read_only=True)
+
+    class Meta:
+        model = Formacao
+        fields = ["id", "professor", "professor_nome", "nivel", "nivel_nome", "curso", "instituicao",
+                  "ano_conclusao", "materias", "materias_nomes", "habilita"]
+
+    def get_materias_nomes(self, formacao):
+        return [m.nome for m in formacao.materias.all()]
+
+    def validate(self, attrs):
+        if self.instance is not None and "professor" in attrs and attrs["professor"] != self.instance.professor:
+            raise serializers.ValidationError({"professor": "Não dá pra passar a formação para outro professor."})
+        attrs = super().validate(attrs)
+        nivel = attrs.get("nivel", getattr(self.instance, "nivel", Formacao.Nivel.LICENCIATURA))
+        materias = attrs.get("materias", list(self.instance.materias.all()) if self.instance else [])
+        if nivel == Formacao.Nivel.POS and materias:
+            raise serializers.ValidationError({"materias": (
+                "Pós-graduação não habilita para dar aula na educação básica (LDB, art. 62). "
+                "Marque as matérias na licenciatura do professor."
+            )})
+        if nivel != Formacao.Nivel.POS and not materias:
+            raise serializers.ValidationError({"materias": "Marque as matérias que essa formação habilita."})
+        if self.instance is not None:
+            self.conferir_turmas(self.instance.professor, tirando=self.instance,
+                                 novas=set(m.id for m in materias) if nivel != Formacao.Nivel.POS else set())
+        return attrs
+
+    @staticmethod
+    def conferir_turmas(professor, tirando, novas=frozenset()):
+        """Não deixa tirar a habilitação de uma matéria que o professor dá neste ano."""
+        ano = timezone.localdate().year
+        outras = set(
+            Formacao.objects.filter(professor=professor, nivel__in=Formacao.NIVEIS_QUE_HABILITAM)
+            .exclude(pk=tirando.pk).values_list("materias", flat=True)
+        ) - {None}
+        ficam = outras | set(novas)
+        dando = Lotacao.objects.filter(professor=professor, turma__ano_letivo__gte=ano).exclude(materia_id__in=ficam)
+        primeira = dando.select_related("materia", "turma__serie").first()
+        if primeira:
+            raise serializers.ValidationError({"materias": (
+                f"{professor.nome} dá {primeira.materia} na {primeira.turma.serie} {primeira.turma.letra}. "
+                "Peça à escola para tirar essa turma antes de mudar a formação."
+            )})
 
 
 class ProfessorSerializer(ModelSerializerComRegras):
@@ -15,6 +78,8 @@ class ProfessorSerializer(ModelSerializerComRegras):
     aulas_ano_atual = serializers.SerializerMethodField()
     usuario_nome = serializers.CharField(source="usuario.username", read_only=True, default=None)
     afastamento_atual = serializers.SerializerMethodField()
+    formacoes = serializers.SerializerMethodField()
+    habilitado_em = serializers.SerializerMethodField()
 
     class Meta:
         model = Professor
@@ -22,8 +87,20 @@ class ProfessorSerializer(ModelSerializerComRegras):
             "id", "nome", "matricula", "cpf", "cpf_formatado", "usuario", "usuario_nome",
             "carga_horaria_semanal", "carga_nome", "vinculo", "vinculo_nome",
             "data_admissao", "ativo", "limite_aulas", "aulas_ano_atual", "afastamento_atual",
+            "formacoes", "habilitado_em",
         ]
         read_only_fields = ["usuario"]  # o login é criado pela ação "criar_acesso"
+        # Obrigatória no cadastro (pedido do mentor).
+        extra_kwargs = {"data_admissao": {"required": True, "allow_null": False,
+                                          "error_messages": {"required": "Informe a data de admissão.",
+                                                             "null": "Informe a data de admissão."}}}
+
+    def get_formacoes(self, professor):
+        return [resumo_formacao(f) for f in professor.formacoes.all()]
+
+    def get_habilitado_em(self, professor):
+        """Nomes das matérias que a formação habilita (ex.: ["Física", "Química"])."""
+        return sorted({nome for f in professor.formacoes.all() if f.habilita for nome in (m.nome for m in f.materias.all())})
 
     def get_aulas_ano_atual(self, professor):
         return professor.aulas_no_ano(timezone.localdate().year)

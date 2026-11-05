@@ -17,9 +17,10 @@ from academico.demo import DemoAcademica, cpf_ficticio
 from calendario.models import CalendarioLetivo, Evento
 from contas.models import Usuario
 from documentos.demo import criar_atestados_aceitos_demo, criar_documentos_demo
+from inscricoes.demo import criar_inscricoes_demo
 from rede.models import Curso, Escola, Materia, Regional, Serie, Turma
 from regulacao.models import AtoAutorizativo, ItemMatriz, Matriz, Oferta
-from rh.models import Alocacao, Lotacao, Professor
+from rh.models import Alocacao, Formacao, Lotacao, Professor, matriz_da_turma
 from solicitacoes.demo import criar_pedidos_demo
 
 ANO = 2026
@@ -62,6 +63,27 @@ MATRIZ_FUNDAMENTAL = {
     "Inglês": 2, "Educação Física": 2, "Arte": 2,
 }
 
+# Formação de cada professor (RH) e as matérias que ela habilita. Pós-graduação não habilita.
+# matrícula: [(nível, curso, instituição, ano de conclusão, [matérias])]
+FORMACOES = {
+    "100001-1": [("licenciatura", "Licenciatura em Matemática", "UFS", 2012, ["Matemática"])],
+    "100002-2": [("licenciatura", "Licenciatura em Letras - Português", "UFS", 2010, ["Português"]),
+                 ("pos", "Especialização em Linguística Aplicada", "UFS", 2014, [])],
+    "100003-3": [("licenciatura", "Licenciatura em Física", "IFS", 2016, ["Física"]),
+                 ("licenciatura", "Licenciatura em Química", "UFS", 2019, ["Química"])],
+    "100004-4": [("licenciatura", "Licenciatura em História", "UFS", 2011, ["História"]),
+                 ("licenciatura", "Licenciatura em Geografia", "UNIT", 2015, ["Geografia"])],
+    "100005-5": [("licenciatura", "Licenciatura em Artes Visuais", "UFS", 2021, ["Arte"])],
+    "100006-6": [("licenciatura", "Licenciatura em Letras - Português", "UFS", 2005, ["Português"]),
+                 ("pos", "Especialização em Gestão Escolar", "UNIT", 2009, [])],
+    "100007-7": [("licenciatura", "Licenciatura em Ciências Biológicas", "UFS", 2008, ["Biologia", "Ciências"])],
+    "100008-8": [("licenciatura", "Licenciatura em Geografia", "UFS", 2006, ["Geografia"])],
+    "100009-9": [("complementacao", "Engenharia Civil + Complementação Pedagógica", "UFS", 2004, ["Matemática", "Física"])],
+}
+
+# Matriz própria do Murilo Braga (Centro de Excelência): 1 aula a mais de Matemática na 1ª série.
+MATRIZ_MURILO = {**MATRIZ_MEDIO, "Matemática": 6}
+
 # usuário, senha, nome, sobrenome, perfil, setor, escola (chave de criar_escolas ou None)
 USUARIOS = [
     ("aluno1", "aluno", "Ana Beatriz", "Souza", Usuario.Perfil.ALUNO, "", "atheneu"),
@@ -95,10 +117,14 @@ class Command(BaseCommand):
         DemoAcademica(ANO, self.avisos, medio, fundamental).rodar()
         # Pedidos da escola1 para a DIES (solicitacoes/demo.py)
         criar_pedidos_demo(ANO)
+        # O Paulo (sem escola) é criado na DemoAcademica: completa a formação dele também.
+        self.criar_formacoes(materias)
         # Documentos que a Maria José mandou para as escolas dos filhos (documentos/demo.py)
         criar_documentos_demo()
         # Um atestado e uma justificativa já aceitos (aparecem em amarelo na chamada do professor1)
         criar_atestados_aceitos_demo()
+        # Matrículas feitas pela internet esperando a análise do DIES (inscricoes/demo.py)
+        criar_inscricoes_demo(ANO)
 
         for aviso in self.avisos:
             self.stdout.write(self.style.WARNING(f"Aviso: {aviso}"))
@@ -240,10 +266,12 @@ class Command(BaseCommand):
         for serie in series_medio:
             self.criar_matriz(serie, MATRIZ_MEDIO, materias)
         self.criar_matriz(series_fundamental[0], MATRIZ_FUNDAMENTAL, materias)
+        # Matriz específica de uma escola (o resto da rede usa a da rede).
+        self.criar_matriz(series_medio[0], MATRIZ_MURILO, materias, escola=escolas["murilo"])
 
-    def criar_matriz(self, serie, aulas, materias):
+    def criar_matriz(self, serie, aulas, materias, escola=None):
         matriz, criada = Matriz.objects.get_or_create(
-            serie=serie, ano_letivo=ANO, jornada=Matriz.Jornada.PARCIAL
+            serie=serie, ano_letivo=ANO, jornada=Matriz.Jornada.PARCIAL, escola=escola
         )
         if criada:
             ItemMatriz.objects.bulk_create(
@@ -307,6 +335,8 @@ class Command(BaseCommand):
                 },
             )
 
+        self.criar_formacoes(materias)
+
         # RH: em qual escola cada um trabalha (horas na escola). A Mariana divide 20 h + 20 h.
         alocacoes = [
             ("100001-1", "atheneu", 40, "professor", ""),
@@ -344,13 +374,24 @@ class Command(BaseCommand):
         for matricula, chave_turma, nome_materia in lotacoes:
             self.lotar(criados[matricula], turmas[chave_turma], materias[nome_materia])
 
+    def criar_formacoes(self, materias):
+        """Formação dos professores da demonstração (só para quem ainda não tem nenhuma)."""
+        for matricula, lista in FORMACOES.items():
+            professor = Professor.objects.filter(matricula=matricula).first()
+            if professor is None or professor.formacoes.exists():
+                continue
+            for nivel, curso, instituicao, ano, habilita in lista:
+                formacao = Formacao.objects.create(
+                    professor=professor, nivel=nivel, curso=curso, instituicao=instituicao, ano_conclusao=ano,
+                )
+                formacao.materias.set(materias[nome] for nome in habilita)
+
     def lotar(self, professor, turma, materia):
         """Lota o professor com TODAS as aulas que a matriz dá pra matéria, se as regras deixarem."""
         if Lotacao.objects.filter(professor=professor, turma=turma, materia=materia).exists():
             return
-        item = ItemMatriz.objects.filter(
-            matriz__serie=turma.serie, matriz__ano_letivo=turma.ano_letivo, materia=materia
-        ).first()
+        matriz = matriz_da_turma(turma)
+        item = matriz.itens.filter(materia=materia).first() if matriz else None
         if item is None:
             self.avisos.append(f"{materia} não está na matriz de {turma.serie}; pulei {professor.nome}.")
             return

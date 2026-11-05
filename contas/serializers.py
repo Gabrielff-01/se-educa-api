@@ -1,4 +1,6 @@
+from django.contrib.auth.hashers import check_password
 from rest_framework import serializers
+from rest_framework.exceptions import AuthenticationFailed
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
 from .models import Usuario
@@ -33,6 +35,32 @@ class LoginSerializer(TokenObtainPairSerializer):
     default_error_messages = {"no_active_account": "Usuário ou senha incorretos."}
 
     def validate(self, attrs):
-        dados = super().validate(attrs)  # {"refresh": "...", "access": "..."}
+        try:
+            dados = super().validate(attrs)  # {"refresh": "...", "access": "..."}
+        except AuthenticationFailed:
+            self.avisar_inscricao(attrs)
+            raise
         dados["usuario"] = UsuarioSerializer(self.user).data
         return dados
+
+    @staticmethod
+    def avisar_inscricao(attrs):
+        """Quem fez a matrícula pela internet e ainda não foi aprovado vê o andamento aqui.
+
+        Só mostra se o e-mail E a senha baterem com o pedido (ninguém descobre o pedido dos outros).
+        """
+        from inscricoes.models import Inscricao  # aqui dentro: o app inscricoes depende do contas
+
+        email = (attrs.get("username") or "").strip().lower()
+        pedido = Inscricao.objects.filter(email=email).exclude(status=Inscricao.Status.APROVADA).first()
+        if pedido is None or not check_password(attrs.get("password") or "", pedido.senha):
+            return
+        if pedido.status == Inscricao.Status.AGUARDANDO:
+            raise AuthenticationFailed(
+                f"Sua matrícula (protocolo {pedido.protocolo}) ainda está em análise pelo DIES. "
+                "Assim que for aprovada, você entra com este e-mail e senha."
+            )
+        raise AuthenticationFailed(
+            f"Sua matrícula (protocolo {pedido.protocolo}) foi recusada pelo DIES: {pedido.motivo_recusa} "
+            "Você pode fazer um novo pedido na tela inicial."
+        )
