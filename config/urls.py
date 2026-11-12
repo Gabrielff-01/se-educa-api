@@ -27,7 +27,8 @@ from auditoria.views import RegistroViewSet
 from calendario.views import CalendarioLetivoViewSet, EventoViewSet
 from contas.views import EuView, LoginView
 from documentos.views import DocumentoViewSet
-from inscricoes.views import InscricaoViewSet
+from inscricoes.views import InscricaoViewSet, identificar
+from olimpiadas.views import OlimpiadaViewSet
 from rede.views import (
     CursoViewSet,
     EscolaViewSet,
@@ -40,6 +41,7 @@ from rede.views import (
 from regulacao.views import AtoAutorizativoViewSet, MatrizViewSet, OfertaViewSet
 from rh.views import AfastamentoViewSet, AlocacaoViewSet, FormacaoViewSet, LotacaoViewSet, ProfessorViewSet
 from solicitacoes.views import SolicitacaoViewSet
+from transporte.views import RotaViewSet
 
 from .views import inicio, opcoes
 
@@ -89,6 +91,10 @@ router.register("solicitacoes", SolicitacaoViewSet, basename="solicitacao")
 router.register("documentos", DocumentoViewSet, basename="documento")
 # Matrícula pela internet (sem login) e a análise do DIES
 router.register("inscricoes", InscricaoViewSet, basename="inscricao")
+# Olimpíadas escolares (a escola organiza; o aluno se inscreve)
+router.register("olimpiadas", OlimpiadaViewSet, basename="olimpiada")
+# Transporte escolar (a escola cadastra as rotas e põe os alunos)
+router.register("rotas", RotaViewSet, basename="rota")
 
 urlpatterns = [
     path("", inicio),
@@ -96,6 +102,7 @@ urlpatterns = [
     path("api/auth/login/", LoginView.as_view()),
     path("api/auth/refresh/", TokenRefreshView.as_view()),
     path("api/auth/eu/", EuView.as_view()),
+    path("api/auth/identificar/", identificar),
     path("api/opcoes/", opcoes),
     # Telas de resumo (só leitura, calculadas na hora)
     path("api/meus-alunos/", paineis.meus_alunos),

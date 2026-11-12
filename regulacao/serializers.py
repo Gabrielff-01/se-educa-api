@@ -55,7 +55,23 @@ class OfertaSerializer(ModelSerializerComRegras):
                         "series": f"Estas turmas ficariam sem a série delas na oferta: {nomes}. "
                                   "Marque a série delas ou apague essas turmas antes."
                     })
+        self.conferir_atos(attrs.get("escola") or (oferta and oferta.escola), attrs.get("series"))
         return super().validate(attrs)
+
+    def conferir_atos(self, escola, series):
+        """Pedido do mentor: escola de Ensino Médio não pode ganhar 6º ano.
+        A escola só oferece séries de um curso (nível de ensino) para o qual tem ato de
+        autorização, reconhecimento ou renovação (Resolução Normativa CEE/SE nº 2/2014)."""
+        if not escola or not series:
+            return
+        autorizados = set(AtoAutorizativo.objects.filter(
+            escola=escola, tipo__in=AtoAutorizativo.TIPOS_POR_CURSO).values_list("curso_id", flat=True))
+        sem_ato = [serie for serie in series if serie.curso_id not in autorizados]
+        if sem_ato:
+            cursos = sorted({serie.curso.nome for serie in sem_ato})
+            raise serializers.ValidationError({"series": (
+                f"{escola} não tem ato autorizando {', '.join(cursos)}, então não pode oferecer "
+                f"{', '.join(serie.nome for serie in sem_ato)}. Cadastre antes o ato em Atos autorizativos (DIES).")})
 
 
 class ItemMatrizSerializer(serializers.ModelSerializer):
