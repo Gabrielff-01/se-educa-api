@@ -1,4 +1,4 @@
-"""Matrículas pela internet de exemplo, esperando a análise do DIES. Chamado pelo popular_demo.
+"""Matrículas pela internet de exemplo, esperando a análise da escola. Chamado pelo popular_demo.
 
 Para testar o aviso no login: entre com lucas.andrade@exemplo.com e a senha matricula123.
 """
@@ -6,8 +6,10 @@ Para testar o aviso no login: entre com lucas.andrade@exemplo.com e a senha matr
 from datetime import date
 
 from django.contrib.auth.hashers import make_password
+from django.db import models
 
 from academico.demo import cpf_ficticio
+from contas.models import Usuario
 from rede.models import Escola, Turma
 
 from .models import Inscricao
@@ -35,13 +37,20 @@ def criar_inscricoes_demo(ano):
              cep="49500-000", endereco="Avenida Exemplo Central", numero="45", complemento="Casa B",
              bairro="Centro", cidade="Itabaiana", uf="SE", turno_preferido=""),
     ]
-    for indice, dados in enumerate(pedidos):
-        escola = escolas[indice % len(escolas)]
-        oferta = escola.ofertas.filter(ano_letivo=ano).first()
-        series = list(oferta.series.order_by("curso__ordem", "ordem")) if oferta else []
-        if not series:
+    # Lucas pede vaga no Atheneu (escola1) e Júlia no Murilo Braga (escola3, Itabaiana, onde ela mora),
+    # sempre numa série e turno que a escola tem turma. Assim a escola1 e a escola3 já têm pedido pra analisar.
+    destinos = [Usuario.objects.filter(username=u).values_list("escola_id", flat=True).first()
+                for u in ("escola1", "escola3")]
+    for dados, escola_id in zip(pedidos, destinos):
+        turno = dados["turno_preferido"]
+        turmas = Turma.objects.filter(ano_letivo=ano, escola_id=escola_id, escola__ofertas__ano_letivo=ano,
+                                      escola__ofertas__series=models.F("serie"))
+        if turno:
+            turmas = turmas.filter(turno=turno)
+        turma = turmas.select_related("escola", "serie").order_by("serie__curso__ordem", "serie__ordem").first()
+        if turma is None:
             continue
-        serie = series[min(indice + len(series) // 2, len(series) - 1)]
-        inscricao = Inscricao(**dados, escola=escola, serie=serie, ano_letivo=ano, senha=make_password(SENHA_DEMO))
+        inscricao = Inscricao(**dados, escola=turma.escola, serie=turma.serie, ano_letivo=ano,
+                              senha=make_password(SENHA_DEMO))
         inscricao.full_clean()
         inscricao.save()

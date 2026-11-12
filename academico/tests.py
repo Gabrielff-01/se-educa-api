@@ -180,6 +180,27 @@ class MatriculaTest(Base):
         resposta = self.client.post("/api/matriculas/", dados, format="json")
         self.assertEqual(resposta.status_code, 400)
 
+    def test_nova_matricula_so_em_serie_com_turma(self):
+        # Caso do Victor: 6º ano numa escola de Ensino Médio (sem turma dessa série) tem que ser barrado.
+        self.entrar("escola1")
+        escola = Usuario.objects.get(username="escola1").escola
+        sexto = Serie.objects.get(curso__nome="Ensino Fundamental - Anos Finais", ordem=2)
+        dados = {"aluno_nome": "Teste Sexto Ano", "aluno_nascimento": "2014-05-05", "aluno_cpf": "111.444.777-35",
+                 "escola": escola.pk, "serie": sexto.pk, "ano_letivo": 2026}
+        resposta = self.client.post("/api/matriculas/nova/", dados, format="json")
+        self.assertEqual(resposta.status_code, 400)
+        self.assertIn("não tem turma", str(resposta.data["serie"]))
+        self.assertFalse(Aluno.objects.filter(nome="Teste Sexto Ano").exists())
+
+    def test_nova_matricula_cpf_repetido(self):
+        self.entrar("escola1")
+        escola = Usuario.objects.get(username="escola1").escola
+        dados = {"aluno_nome": "Outra Pessoa", "aluno_nascimento": "2010-05-05", "aluno_cpf": "123.456.789-09",
+                 "escola": escola.pk, "serie": self.turma.serie_id, "ano_letivo": self.turma.ano_letivo}
+        resposta = self.client.post("/api/matriculas/nova/", dados, format="json")
+        self.assertEqual(resposta.status_code, 400)
+        self.assertIn("aluno_cpf", resposta.data)
+
     def test_escola_nao_mexe_em_matricula_de_outra(self):
         self.entrar("escola1")
         minha = Usuario.objects.get(username="escola1").escola_id

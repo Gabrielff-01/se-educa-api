@@ -13,15 +13,17 @@ from django.core.exceptions import ValidationError
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
-from academico.demo import DemoAcademica, cpf_ficticio
+from academico.demo import DemoAcademica, cpf_ficticio, preencher_cpfs_demo
 from calendario.models import CalendarioLetivo, Evento
 from contas.models import Usuario
 from documentos.demo import criar_atestados_aceitos_demo, criar_documentos_demo
 from inscricoes.demo import criar_inscricoes_demo
+from olimpiadas.demo import criar_olimpiadas_demo
 from rede.models import Curso, Escola, Materia, Regional, Serie, Turma
 from regulacao.models import AtoAutorizativo, ItemMatriz, Matriz, Oferta
 from rh.models import Alocacao, Formacao, Lotacao, Professor, matriz_da_turma
 from solicitacoes.demo import criar_pedidos_demo
+from transporte.demo import criar_rotas_demo
 
 ANO = 2026
 
@@ -115,6 +117,8 @@ class Command(BaseCommand):
         self.criar_professores(turmas, materias)
         # Alunos, grade, diário, notas, tarefas... (academico/demo.py)
         DemoAcademica(ANO, self.avisos, medio, fundamental).rodar()
+        # Todo aluno com CPF (a Ana Beatriz, aluno1, fica com 123.456.789-09)
+        preencher_cpfs_demo()
         # Pedidos da escola1 para a DIES (solicitacoes/demo.py)
         criar_pedidos_demo(ANO)
         # O Paulo (sem escola) é criado na DemoAcademica: completa a formação dele também.
@@ -123,8 +127,12 @@ class Command(BaseCommand):
         criar_documentos_demo()
         # Um atestado e uma justificativa já aceitos (aparecem em amarelo na chamada do professor1)
         criar_atestados_aceitos_demo()
-        # Matrículas feitas pela internet esperando a análise do DIES (inscricoes/demo.py)
+        # Matrículas feitas pela internet esperando a análise da escola (inscricoes/demo.py)
         criar_inscricoes_demo(ANO)
+        # Olimpíadas da escola1 e da escola3 (olimpiadas/demo.py)
+        criar_olimpiadas_demo(ANO)
+        # Rotas de transporte da escola1 e da escola3 (transporte/demo.py)
+        criar_rotas_demo()
 
         for aviso in self.avisos:
             self.stdout.write(self.style.WARNING(f"Aviso: {aviso}"))
@@ -287,6 +295,8 @@ class Command(BaseCommand):
              date(2023, 8, 2), date(2028, 8, 1)),
             ("goncalo", fundamental, AtoAutorizativo.Tipo.AUTORIZACAO, "Resolução nº 087/2020",
              date(2020, 5, 20), date(2025, 12, 31)),  # vencido: aparece com alerta
+            ("goncalo", medio, AtoAutorizativo.Tipo.RECONHECIMENTO, "Resolução nº 112/2021",
+             date(2021, 6, 10), date(2029, 6, 9)),
             ("murilo", medio, AtoAutorizativo.Tipo.RECONHECIMENTO, "Resolução nº 201/2025",
              date(2025, 11, 10), date(2030, 11, 9)),
         ]

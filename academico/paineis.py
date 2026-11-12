@@ -725,6 +725,8 @@ def notificacoes(request):
                                   "tela": "tarefas"})
     itens += avisos_de_pedidos(usuario, desde)
     itens += avisos_de_documentos(usuario, desde)
+    itens += avisos_de_inscricoes(usuario, desde)
+    itens += avisos_de_olimpiadas(usuario, desde)
     for comunicado in comunicados_visiveis(usuario).filter(criado_em__gte=desde).exclude(autor=usuario)[:30]:
         itens.append({"id": f"comunicado-{comunicado.id}", "tipo": "comunicado", "quando": comunicado.criado_em,
                       "titulo": comunicado.titulo, "texto": comunicado.texto[:140], "tela": "comunicados"})
@@ -757,6 +759,28 @@ def avisos_de_pedidos(usuario, desde):
         itens.append({"id": f"pedido-{m.id}", "tipo": "pedido", "quando": m.criada_em, "titulo": titulo,
                       "texto": f"{pedido.titulo} · {m.texto[:120]}", "tela": tela})
     return itens
+
+
+def avisos_de_inscricoes(usuario, desde):
+    """Matrícula pela internet: a escola escolhida é avisada de cada pedido novo (é ela quem aprova)."""
+    from inscricoes.models import Inscricao  # aqui dentro: o app inscricoes também usa o academico
+
+    if usuario.perfil != Perfil.ESCOLA or not usuario.escola_id:
+        return []
+    pedidos = Inscricao.objects.filter(escola_id=usuario.escola_id, criada_em__gte=desde,
+                                       status=Inscricao.Status.AGUARDANDO).select_related("serie")
+    return [
+        {"id": f"inscricao-{i.id}", "tipo": "inscricao", "quando": i.criada_em,
+         "titulo": "Matrícula pela internet", "texto": f"{i.aluno_nome} pediu vaga no {i.serie.nome}",
+         "tela": "escInscricoes"}
+        for i in pedidos[:30]
+    ]
+
+
+def avisos_de_olimpiadas(usuario, desde):
+    from olimpiadas.avisos import avisos_de_olimpiadas as avisos  # import aqui dentro (evita ciclo entre apps)
+
+    return avisos(usuario, desde)
 
 
 def avisos_de_documentos(usuario, desde):

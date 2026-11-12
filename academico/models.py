@@ -17,7 +17,7 @@ from django.utils import timezone
 
 from calendario.models import UNIDADES_POR_ANO, calendario_da_escola
 from rede.models import Escola, Materia, Serie, Turma
-from rh.models import Lotacao, Professor, matriz_da_turma, validar_cpf
+from rh.models import Lotacao, Professor, matriz_da_turma, so_numeros, validar_cpf
 
 MEDIA_APROVACAO = Decimal("6.0")
 NOTA_RECUPERACAO = Decimal("4.0")
@@ -51,6 +51,13 @@ class Aluno(models.Model):
 
     nome = models.CharField(verbose_name="nome completo", max_length=150)
     data_nascimento = models.DateField(verbose_name="data de nascimento")
+    cpf = models.CharField(
+        verbose_name="CPF",
+        max_length=14,
+        blank=True,
+        validators=[validar_cpf],
+        help_text="Só os números. É por ele que a matrícula pela internet sabe se o aluno já tem cadastro.",
+    )
     codigo = models.CharField(
         verbose_name="código do aluno",
         max_length=12,
@@ -93,9 +100,18 @@ class Aluno(models.Model):
         ordering = ["nome"]
         verbose_name = "aluno"
         verbose_name_plural = "alunos"
+        constraints = [
+            # CPF em branco pode repetir (aluno antigo sem CPF); preenchido, é um aluno só.
+            models.UniqueConstraint(fields=["cpf"], condition=~Q(cpf=""), name="aluno_cpf_unico",
+                                    violation_error_message="Já existe um aluno com esse CPF."),
+        ]
 
     def clean(self):
+        self.cpf = so_numeros(self.cpf or "")  # guarda só os números
         super().clean()
+        # A regra do banco (aluno_cpf_unico) também barra, mas assim o erro aparece embaixo do campo CPF.
+        if self.cpf and Aluno.objects.filter(cpf=self.cpf).exclude(pk=self.pk).exists():
+            raise ValidationError({"cpf": "Já existe um aluno com esse CPF."})
         if self.programa_social and not self.nis:
             raise ValidationError({"nis": "Quem recebe programa social precisa ter o NIS."})
         if self.data_nascimento and self.data_nascimento > timezone.localdate():

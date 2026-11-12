@@ -126,6 +126,14 @@ class OfertaAPITest(APITestCase):
         resposta = self.client.delete(f"/api/ofertas/{self.oferta.pk}/")
         self.assertEqual(resposta.status_code, 400)
 
+    def test_nao_oferece_serie_sem_ato_do_curso(self):
+        # O Atheneu só tem ato de Ensino Médio: não pode ganhar 6º ano (caso que o mentor achou).
+        sexto = Serie.objects.get(curso__nome="Ensino Fundamental - Anos Finais", ordem=2)
+        series = list(self.oferta.series.values_list("pk", flat=True)) + [sexto.pk]
+        resposta = self.client.patch(f"/api/ofertas/{self.oferta.pk}/", {"series": series}, format="json")
+        self.assertEqual(resposta.status_code, 400)
+        self.assertIn("não tem ato autorizando Ensino Fundamental", str(resposta.data))
+
     def test_ato_vencido_aparece(self):
         resposta = self.client.get("/api/atos/")
         vencidos = [ato for ato in resposta.data if not ato["vigente"]]

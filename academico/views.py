@@ -19,7 +19,7 @@ from config.api import FiltrosMixin, erros_do_django_para_drf
 from contas.acessos import CriarAcessoSerializer, criar_login
 from contas.models import Usuario
 from rede.models import Escola, Materia, Serie, Turma
-from rh.models import Lotacao
+from rh.models import Lotacao, so_numeros
 
 from .acesso import (
     ESCOLA_OU_SECRETARIA,
@@ -93,7 +93,11 @@ class AlunoViewSet(Base):
         alunos = alunos_visiveis(self.request.user).prefetch_related("vinculos__responsavel")
         busca = self.request.query_params.get("busca")
         if busca:
-            alunos = alunos.filter(Q(nome__icontains=busca) | Q(codigo__icontains=busca))
+            filtro = Q(nome__icontains=busca) | Q(codigo__icontains=busca)
+            numeros = so_numeros(busca)
+            if len(numeros) >= 3 and len(numeros) == len(busca.replace(".", "").replace("-", "").strip()):
+                filtro |= Q(cpf__startswith=numeros)  # também acha pelo CPF
+            alunos = alunos.filter(filtro)
         return self.aplicar_filtros(alunos)
 
     @action(detail=True, methods=["post"])
@@ -261,9 +265,14 @@ class MatriculaViewSet(Base):
         if escola is None or serie is None:
             raise serializers.ValidationError({"detail": "Escola ou série não encontrada."})
         conferir_escola(request.user, escola.pk)
+        # Pedido do mentor: só matricula em série que a escola tem turma (nada de 6º ano em escola de Ensino Médio).
+        if not Turma.objects.filter(escola=escola, serie=serie, ano_letivo=d["ano_letivo"]).exists():
+            raise serializers.ValidationError({"serie": (
+                f"{escola} não tem turma de {serie.nome} em {d['ano_letivo']}. "
+                "Se a escola oferece essa série, peça a turma à DIES em Pedidos à DIES.")})
 
         aluno = Aluno(
-            nome=d["aluno_nome"].strip(), data_nascimento=d["aluno_nascimento"],
+            nome=d["aluno_nome"].strip(), data_nascimento=d["aluno_nascimento"], cpf=d.get("aluno_cpf", ""),
             programa_social=d.get("programa_social", ""), nis=d.get("nis", ""),
             necessidade_especial=d.get("necessidade_especial", ""),
         )
@@ -271,7 +280,7 @@ class MatriculaViewSet(Base):
             aluno.full_clean(exclude=["codigo"])
         except DjangoValidationError as erro:
             drf = erros_do_django_para_drf(erro).detail
-            nomes = {"nome": "aluno_nome", "data_nascimento": "aluno_nascimento"}
+            nomes = {"nome": "aluno_nome", "data_nascimento": "aluno_nascimento", "cpf": "aluno_cpf"}
             raise serializers.ValidationError({nomes.get(campo, campo): msg for campo, msg in drf.items()})
         aluno.save()
 

@@ -429,3 +429,29 @@ class DemoAcademica:
                 autor=professor, alcance=Comunicado.Alcance.TURMA, turma=turma,
                 titulo="Prova de Matemática da 4ª unidade",
                 texto="A prova será no dia 10/11. Conteúdo: progressões aritmética e geométrica.")
+
+
+# CPF da Ana Beatriz (aluno1): o de exemplo mais conhecido, fácil de testar na tela
+# "Fazer matrícula" (ela já tem cadastro, então o app manda pro login).
+CPF_ALUNO1 = "12345678909"
+
+
+def preencher_cpfs_demo():
+    """Dá um CPF fictício aos alunos de exemplo que ainda não têm (bancos criados antes do campo existir).
+
+    Pode rodar de novo: só mexe em quem está com o CPF em branco.
+    """
+    ana = Aluno.objects.filter(usuario__username="aluno1", cpf="").first()
+    if ana and not Aluno.objects.filter(cpf=CPF_ALUNO1).exists():
+        ana.cpf = CPF_ALUNO1
+        ana.save(update_fields=["cpf"])
+    usados = set(Aluno.objects.exclude(cpf="").values_list("cpf", flat=True))
+    for aluno in Aluno.objects.filter(cpf=""):
+        base = 400000000 + aluno.pk * 7919  # número diferente para cada aluno
+        cpf = cpf_ficticio(f"{base % 1000000000:09d}")
+        while cpf in usados:
+            base += 1
+            cpf = cpf_ficticio(f"{base % 1000000000:09d}")
+        aluno.cpf = cpf
+        aluno.save(update_fields=["cpf"])
+        usados.add(cpf)

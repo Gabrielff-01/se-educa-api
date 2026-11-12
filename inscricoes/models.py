@@ -1,11 +1,14 @@
 """Matrícula pela internet: a família se inscreve sozinha, antes de ter login.
 
 Caminho:
-1. Na tela de entrada do app, "Fazer matrícula": a família preenche os dados do aluno,
-   o endereço e a escola/série que quer. Nasce uma Inscricao "aguardando análise".
-2. O DIES analisa (tela "Matrículas pela internet") e aprova ou recusa com o motivo.
+1. Na tela de entrada do app, "Fazer matrícula": a família digita o CPF do aluno.
+   Já tem cadastro? Vai pro login. Não tem? Preenche os dados, o endereço, a série,
+   o turno e por último a escola (só aparecem as que têm turma daquela série e turno).
+   Nasce uma Inscricao "aguardando análise".
+2. A ESCOLA escolhida analisa (tela "Matrículas pela internet") e aprova ou recusa com o motivo.
 3. Aprovada: o sistema cria o aluno, o responsável, o login do aluno (e-mail e senha
-   que ele escolheu) e a matrícula "em análise" SEM turma. Ela cai na Enturmação do DIES.
+   que ele escolheu) e a matrícula. Se a escola já escolheu a turma, a matrícula sai
+   confirmada; se não, fica "em análise" sem turma e aparece na Enturmação.
 Enquanto não é aprovada, quem tenta entrar com o e-mail vê o andamento no próprio login.
 """
 
@@ -16,7 +19,7 @@ from django.db import models
 from django.db.models import Q
 from django.utils import timezone
 
-from academico.models import Matricula, Vinculo
+from academico.models import Aluno, Matricula, Vinculo
 from rede.models import Escola, Serie, Turma
 from rh.models import so_numeros, validar_cpf
 
@@ -76,7 +79,7 @@ class Inscricao(models.Model):
     turno_preferido = models.CharField(verbose_name="turno preferido", max_length=10,
                                        choices=Turma.Turno.choices, blank=True)
 
-    # Análise do DIES
+    # Análise da escola escolhida
     status = models.CharField(verbose_name="situação", max_length=10, choices=Status.choices, default=Status.AGUARDANDO)
     motivo_recusa = models.TextField(verbose_name="motivo da recusa", blank=True)
     analisada_por = models.ForeignKey(settings.AUTH_USER_MODEL, verbose_name="analisada por", on_delete=models.SET_NULL,
@@ -93,11 +96,11 @@ class Inscricao(models.Model):
         constraints = [
             models.UniqueConstraint(
                 fields=["cpf"], condition=Q(status="aguardando"), name="uma_inscricao_aguardando_por_cpf",
-                violation_error_message="Já existe um pedido de matrícula desse CPF esperando a análise do DIES.",
+                violation_error_message="Já existe um pedido de matrícula desse CPF esperando a análise da escola.",
             ),
             models.UniqueConstraint(
                 fields=["email"], condition=Q(status="aguardando"), name="uma_inscricao_aguardando_por_email",
-                violation_error_message="Já existe um pedido de matrícula com esse e-mail esperando a análise do DIES.",
+                violation_error_message="Já existe um pedido de matrícula com esse e-mail esperando a análise da escola.",
             ),
         ]
 
@@ -119,14 +122,16 @@ class Inscricao(models.Model):
         if self.cpf and self.cpf == self.responsavel_cpf and self.idade is not None and self.idade < 18:
             erros["responsavel_cpf"] = "O CPF do responsável tem que ser diferente do CPF do aluno."
         if self.escola_id and self.serie_id and self.ano_letivo:
-            if not self.escola.ofertas.filter(ano_letivo=self.ano_letivo, series=self.serie).exists():
-                erros["serie"] = f"{self.escola} não oferece {self.serie.nome} em {self.ano_letivo}."
-        # O aluno não tem CPF no cadastro da rede; quem garante que não entra duas vezes é o pedido aprovado.
-        if self.cpf and self.pk is None and self.ano_letivo:
-            aprovada = Inscricao.objects.filter(cpf=self.cpf, ano_letivo=self.ano_letivo, status=self.Status.APROVADA).first()
-            if aprovada:
-                erros["cpf"] = (f"Esse aluno já tem matrícula aprovada para {self.ano_letivo} (protocolo {aprovada.protocolo}). "
-                                "Para mudar de escola, fale com a escola.")
+            # Só escola que oferece a série E tem turma dela no ano (senão o aluno fica sem turma pra ir).
+            turmas = Turma.objects.filter(escola_id=self.escola_id, serie_id=self.serie_id, ano_letivo=self.ano_letivo)
+            if not self.escola.ofertas.filter(ano_letivo=self.ano_letivo, series=self.serie).exists() or not turmas.exists():
+                erros["escola"] = f"{self.escola} não tem turma de {self.serie.nome} em {self.ano_letivo}."
+            elif self.turno_preferido and not turmas.filter(turno=self.turno_preferido).exists():
+                erros["turno_preferido"] = (f"{self.escola} não tem turma de {self.serie.nome} no turno "
+                                            f"{self.get_turno_preferido_display().lower()}.")
+        # Aluno que já está na rede não faz matrícula nova pela internet: entra com o login dele.
+        if self.cpf and self.pk is None and Aluno.objects.filter(cpf=self.cpf).exists():
+            erros["cpf"] = "Verificamos que este CPF já possui cadastro. Entre com seu usuário e senha."
         if self.email and self.pk is None:
             from contas.models import Usuario  # aqui dentro: contas não depende deste app
 
