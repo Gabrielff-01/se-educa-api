@@ -9,6 +9,7 @@ from contas.models import Usuario
 from regulacao.models import AtoAutorizativo, Matriz
 from rede.models import Escola, Materia, Turma
 from rh.models import Afastamento, Alocacao, Formacao, Professor
+from transporte.models import Rota
 
 
 def inicio(request):
@@ -49,5 +50,6 @@ def opcoes(request):
         "status_plano": lista(PlanoAula.Status.choices),
         "alcances": lista(Comunicado.Alcance.choices),
         "dias_semana": lista(Horario.Dia.choices),
+        "veiculos": lista(Rota.Veiculo.choices),
         "dias_letivos_minimos": DIAS_LETIVOS_MINIMOS,
     })

@@ -42,9 +42,14 @@ o diário de aulas até hoje com chamada, notas das unidades que já passaram, t
 comunicados, merenda e uma professora afastada (pra aparecer nas carências do RH).
 Pode rodar de novo sem duplicar nada. Nomes, escolas, códigos INEP, CPFs e NIS são fictícios.
 
-Também cria 2 matrículas pela internet esperando o DIES (Lucas Andrade Menezes e Júlia Santos
-Oliveira). Para ver a mensagem de "em análise" no login, entre com `lucas.andrade@exemplo.com`
-e a senha `matricula123`.
+Também cria 2 matrículas pela internet esperando a escola (Lucas Andrade Menezes no Atheneu e
+Júlia Santos Oliveira no Murilo Braga). Para ver a mensagem de "em análise" no login, entre com
+`lucas.andrade@exemplo.com` e a senha `matricula123`. Todo aluno tem CPF fictício; o da `aluno1`
+é `123.456.789-09` (dá pra entrar com ele no lugar do usuário).
+
+Olimpíadas: o Atheneu tem a de Matemática com resultado (a Ana Beatriz ganhou prata) e a de
+Ciências com inscrições abertas; o Murilo Braga tem a de Redação em andamento. Transporte: o
+Atheneu tem a Rota 1 · Santa Maria (a Ana embarca nela) e o Murilo Braga, duas rotas de povoados.
 
 A aluna `aluno1` é a Ana Beatriz (1ª série A do Atheneu) e a `responsavel1` é a mãe dela,
 que também tem o Pedro (6º ano no Gonçalo Rollemberg). O `professor1` dá Matemática.
@@ -63,7 +68,9 @@ academico/   alunos, responsáveis, matrículas, diário (aulas e chamada), nota
 auditoria/   histórico de alterações: quem criou, editou ou apagou o quê, e o antes/depois
 solicitacoes/ pedidos da escola para a DIES (turma nova, capacidade, outros) com conversa
 documentos/   documentos que aluno/responsável mandam à escola (atestado, matrícula...); a escola aceita ou recusa
-inscricoes/   matrícula pela internet: a família pede a vaga sem login e o DIES aprova ou recusa
+inscricoes/   matrícula pela internet: a família pede a vaga sem login e a ESCOLA escolhida aprova ou recusa
+olimpiadas/   olimpíadas escolares: a escola cadastra, inscreve, lança notas e publica a classificação
+transporte/   transporte escolar: a escola cadastra as rotas (paradas e horários) e põe os alunos nelas
 ```
 
 ## Endereços da API
@@ -104,7 +111,10 @@ Todos pedem login (cabeçalho `Authorization: Bearer <token>`), menos o login e 
 | `GET /api/documentos/na-chamada/?turma=<id>&data=AAAA-MM-DD` | alunos da turma com atestado ou justificativa ACEITOS que cobrem o dia (amarelo na chamada) |
 | `GET /api/inscricoes/escolas/` | **sem login.** Escolas com as séries abertas no ano e os turnos de cada série (pro formulário da matrícula) |
 | `POST /api/inscricoes/` | **sem login.** A família manda o pedido de matrícula (dados do aluno e do responsável, endereço, escola, série, e-mail e senha). Devolve o protocolo. Limite de 20 envios por hora por IP |
-| `/api/inscricoes/` | só o DIES lista e vê (`?status=aguardando`). `aprovar` cria aluno, responsável, login do aluno e a matrícula em análise sem turma (cai na Enturmação); `recusar` pede o motivo |
+| `POST /api/auth/identificar/` | **sem login.** 1º passo do login e da matrícula: diz se o CPF, usuário ou e-mail já tem cadastro (`tem_login`, `pedido`, `sem_acesso`, `novo` ou `nao_encontrado`). Limite de 60 por hora por IP |
+| `/api/inscricoes/` | a escola vê os pedidos dela (`?status=aguardando`); o DIES só acompanha. `aprovar` (com `turma` opcional) cria aluno, responsável, login do aluno e a matrícula: com turma já fica confirmada, sem turma fica em análise; `recusar` pede o motivo |
+| `/api/olimpiadas/` | olimpíadas da escola. A escola cadastra e muda o andamento; `inscrever`/`sair` (o aluno sozinho ou a escola com `{aluno}`), `notas` (escola) e `classificacao` |
+| `/api/rotas/` | rotas de transporte. A escola cadastra (com `paradas`), `vincular` `{aluno, parada}` e `desvincular`; `GET /api/rotas/minha/` mostra a rota do aluno |
 | `/api/documentos/` | documentos enviados à escola. Aluno/responsável enviam com arquivo (PDF/JPG/PNG até 5 MB, `multipart/form-data`) e cancelam enquanto aguarda; a escola abre (`arquivo`), `aceitar` ou `recusar` (com motivo). O arquivo fica guardado no banco |
 
 Filtros pela URL, por exemplo: `/api/turmas/?escola=1&ano_letivo=2026`.
@@ -132,11 +142,14 @@ As regras ficam nos models (`clean()`), então valem igual no admin e na API:
   não pode passar das aulas da matriz e o
   professor não passa de 2/3 da carga em sala (Lei 11.738/2008): 40 h → 26 aulas, 20 h → 13.
 - **Matrícula pela internet:** CPFs válidos; NIS obrigatório para Bolsa Família; só uma
-  inscrição esperando por CPF e por e-mail; o e-mail não pode já ser login de alguém; a escola
-  tem que oferecer a série no ano; o mesmo aluno (CPF) não tem duas matrículas aprovadas no ano. A senha é guardada criptografada e vira a senha do login do aluno
-  quando o DIES aprova. Antes disso, quem entra com o e-mail e a senha vê o andamento (em análise,
+  inscrição esperando por CPF e por e-mail; o e-mail não pode já ser login de alguém; CPF que já
+  é de um aluno vai pro login; a escola tem que ter turma da série (e do turno, se escolhido) no ano.
+  A senha é guardada criptografada e vira a senha do login do aluno quando a escola aprova. Antes disso, quem entra com o e-mail e a senha vê o andamento (em análise,
   ou recusada com o motivo).
-- **Matrícula:** só em série que a escola oferece; uma matrícula ativa por aluno no ano;
+- **Oferta:** a escola só oferece séries de um curso para o qual tem ato de autorização,
+  reconhecimento ou renovação (escola de Ensino Médio não ganha 6º ano).
+- **Aluno:** CPF único (opcional para quem já estava na rede).
+- **Matrícula:** só em série que a escola oferece (e, na matrícula nova, que tenha turma); uma matrícula ativa por aluno no ano;
   a turma tem que ser da mesma escola, série e ano, e não pode passar da capacidade.
   Bolsa Família e Pé-de-Meia exigem o NIS (11 dígitos).
 - **Unidades:** o ano letivo é dividido em 4 unidades com o mesmo número de dias letivos.
@@ -145,6 +158,10 @@ As regras ficam nos models (`clean()`), então valem igual no admin e na API:
   vai para recuperação. Frequência mínima 75% (Bolsa Família pede 85%, Pé-de-Meia 80%).
 - **Fechamento:** a escola fecha a unidade quando todas as notas foram lançadas, uma unidade
   de cada vez. Unidade fechada não aceita mais nota.
+- **Olimpíada:** inscrição só de aluno com matrícula confirmada na escola e da série aceita;
+  nota de 0 até a nota máxima; empate divide a posição (1º, 2º, 2º, 4º); os primeiros ganham medalha.
+- **Transporte:** paradas em ordem de horário; o aluno fica numa rota só, do mesmo turno da turma
+  dele, e a rota não passa dos lugares.
 - **Horário:** nem a turma nem o professor ficam em dois lugares ao mesmo tempo, e a matéria
   não passa das aulas semanais da lotação.
 

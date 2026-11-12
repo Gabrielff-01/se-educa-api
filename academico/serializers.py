@@ -34,7 +34,7 @@ class AlunoSerializer(ModelSerializerComRegras):
     class Meta:
         model = Aluno
         fields = [
-            "id", "codigo", "nome", "data_nascimento", "idade", "programa_social", "programa_nome",
+            "id", "codigo", "nome", "cpf", "data_nascimento", "idade", "programa_social", "programa_nome",
             "nis", "necessidade_especial", "responsaveis", "matricula_atual", "tem_acesso",
         ]
 
@@ -110,6 +110,7 @@ class NovaMatriculaSerializer(serializers.Serializer):
 
     aluno_nome = serializers.CharField(max_length=150)
     aluno_nascimento = serializers.DateField()
+    aluno_cpf = serializers.CharField(max_length=14, required=False, allow_blank=True)
     programa_social = serializers.ChoiceField(choices=Aluno.Programa.choices, required=False, allow_blank=True)
     nis = serializers.CharField(max_length=11, required=False, allow_blank=True)
     necessidade_especial = serializers.CharField(max_length=120, required=False, allow_blank=True)

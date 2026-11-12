@@ -69,6 +69,8 @@ INSTALLED_APPS = [
     "solicitacoes",
     "documentos",
     "inscricoes",
+    "olimpiadas",
+    "transporte",
 ]
 
 MIDDLEWARE = [
@@ -168,7 +170,7 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
     "EXCEPTION_HANDLER": "config.api.tratar_erros",
     # Limite de pedidos de matrícula pela internet (sem login) por endereço de internet.
-    "DEFAULT_THROTTLE_RATES": {"inscricao": "20/hour"},
+    "DEFAULT_THROTTLE_RATES": {"inscricao": "20/hour", "identificar": "60/hour"},
 }
 
 # Token JWT ("crachá"): o de acesso vale 8 horas, um turno de trabalho.
